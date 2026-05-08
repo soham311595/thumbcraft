@@ -1,8 +1,118 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import { loadBgRemovalModel, removeBackground, isModelLoaded } from "./backgroundRemoval";
+import { fetchYouTubeTranscript, formatTranscript } from "./transcript";
 
-const STEPS = ["references", "analyze", "compose", "export"];
-const STEP_LABELS = ["Reference Thumbnails", "Style Analysis", "Compose", "Export"];
+const STEPS = ["input", "analyze", "concepts", "craft"];
+const STEP_LABELS = ["Video Input", "Analysis", "Concepts", "Craft"];
+
+const AI_MODEL = "openai/gpt-4o-mini";
+
+const VIDEO_ANALYZE_SYSTEM = `You are an expert YouTube strategist and thumbnail designer. Analyze the video transcript and thumbnail to understand the video's content, audience, and visual potential.
+
+Return ONLY valid JSON:
+{
+  "summary": "2-3 sentence summary of the video",
+  "topics": ["key topics covered"],
+  "tone": "overall emotional tone (e.g. exciting, educational, controversial, funny, shocking, mysterious)",
+  "target_audience": "who this video is for",
+  "key_moments": [
+    {
+      "timestamp_seconds": 0,
+      "description": "what happens at this moment",
+      "thumbnail_potential": "why this moment would make a compelling thumbnail visual"
+    }
+  ],
+  "suggested_visual_direction": "creative brief for the thumbnail designer — what visual approach would best capture this video"
+}`;
+
+const CONCEPT_GENERATE_SYSTEM = `You are a world-class YouTube thumbnail concept designer. Given a video's analysis and its transcript, generate 3-4 distinct thumbnail concepts.
+
+Each concept must be visually distinct — different compositions, different focal points, different emotional angles.
+
+Return ONLY valid JSON:
+{
+  "concepts": [
+    {
+      "headline": "SHORT PUNCHY TEXT (2-4 words)",
+      "description": "visual description of what this thumbnail looks like",
+      "composition_notes": "how elements are arranged — subject position, text placement, depth layers",
+      "requested_assets": [
+        "description of image the user needs to provide (e.g. 'host pointing at camera with shocked expression')",
+        "description of another needed image if applicable"
+      ],
+      "emotional_hook": "why this concept grabs attention"
+    }
+  ]
+}`;
+
+const COMPOSE_SYSTEM = `You are a world-class YouTube thumbnail designer. Given extracted subject images (transparent backgrounds), a selected concept, and video analysis, produce a multi-layer 1280x720 composition.
+
+The subject images have their backgrounds already removed. They are labeled as "extracted_subject_0", "extracted_subject_1" etc.
+
+Return ONLY valid JSON:
+{
+  "headline_text": "Short punchy headline (2-4 words max)",
+  "subtext": "Optional smaller supporting text or empty string",
+  "layers": [
+    {
+      "type": "background",
+      "gradient": { "angle": 135, "colors": ["#hex1", "#hex2", "#hex3"] }
+    },
+    {
+      "type": "subject",
+      "index": 0,
+      "x": 60,
+      "y": 100,
+      "scale": 1.0,
+      "rotation": 0,
+      "z_index": 1,
+      "blend_mode": "normal",
+      "opacity": 1.0,
+      "filter": "contrast(1.1) saturate(1.2)"
+    },
+    {
+      "type": "text",
+      "text": "headline",
+      "font": "Bebas Neue",
+      "font_size": 72,
+      "color": "#ffffff",
+      "stroke_color": "#000000",
+      "stroke_width": 4,
+      "shadow": "2px 2px 10px rgba(0,0,0,0.8)",
+      "position": { "x": 60, "y": 280 },
+      "max_width": 920,
+      "text_align": "left",
+      "z_index": 5
+    }
+  ],
+  "effects": {
+    "vignette_strength": 0.6,
+    "grain_opacity": 0.05,
+    "border_glow": true,
+    "border_glow_color": "#f72585"
+  }
+}`;
+
+const CRITIQUE_SYSTEM = `You are a critical YouTube thumbnail reviewer. Analyze the rendered thumbnail image and its composition data.
+
+Score from 1-10 based on:
+- Visual impact and scroll-stopping power
+- Text readability and hierarchy
+- Subject/background contrast
+- Color harmony and emotional fit
+- Composition balance and focal point
+- Adherence to the video's content/tone
+
+Return ONLY valid JSON:
+{
+  "score": 7,
+  "issues": ["specific problem 1", "specific problem 2"],
+  "strengths": ["what works well 1", "what works well 2"],
+  "suggestions": "brief actionable advice to improve this thumbnail",
+  "refined_layers": [
+    { ... same layer structure as input, with improvements applied ... }
+  ]
+}`;
 
 const toBase64 = (file) =>
   new Promise((res, rej) => {
@@ -84,100 +194,33 @@ function fetchYtThumbnail(videoId) {
   });
 }
 
-const ANALYZE_SYSTEM = `You are an expert YouTube thumbnail designer and visual analyst. You will be shown multiple reference thumbnails. Analyze them with EXTREME precision and depth. Return ONLY valid JSON, no markdown fences.
+function loadImage(src) {
+  return new Promise((res) => {
+    const img = new Image();
+    img.onload = () => res(img);
+    img.onerror = () => res(null);
+    img.src = src;
+  });
+}
 
-Your analysis must cover:
-{
-  "overall_style": "A rich 2-3 sentence description of the dominant visual style",
-  "composition": {
-    "layout": "describe the spatial layout pattern",
-    "focal_point": "where the eye is drawn first",
-    "depth": "how depth/layers are created",
-    "negative_space": "how empty space is used"
-  },
-  "color_palette": {
-    "dominant": ["#hex1", "#hex2", "#hex3"],
-    "accent": ["#hex1", "#hex2"],
-    "background_treatment": "gradient type, solid, pattern, etc",
-    "contrast_level": "high/medium/low",
-    "saturation": "oversaturated/natural/desaturated/mixed",
-    "color_grading": "describe the color grade"
-  },
-  "typography": {
-    "headline_style": "bold/italic/outlined/3d/shadowed/glitch etc",
-    "font_weight": "ultra-bold/bold/medium/light",
-    "text_effects": ["list effects like stroke, shadow, glow, gradient fill, 3D extrusion"],
-    "text_position": "where text typically sits",
-    "text_size_ratio": "large/medium/small",
-    "recommended_fonts": ["2-3 Google Fonts that match"]
-  },
-  "photo_treatment": {
-    "subject_cutout": true,
-    "background_removal": true,
-    "face_expressions": "exaggerated/natural/dramatic",
-    "lighting": "describe lighting style",
-    "filters": ["list visible filters"],
-    "border_or_outline": "describe outlines around subjects",
-    "blur_effects": "any bokeh, motion blur, radial blur"
-  },
-  "effects": {
-    "overlays": ["light leaks, dust, grain, emoji, arrows, circles"],
-    "shapes": ["geometric elements, borders, frames, badges"],
-    "texture": "smooth/grainy/noisy/glossy",
-    "glow_or_neon": true,
-    "dramatic_shadows": true
-  },
-  "emotional_tone": "exciting/shocking/calm/luxurious/funny/educational/urgent",
-  "thumbnail_recipe": "A step-by-step recipe to recreate this style from scratch. Be VERY specific."
-}`;
-
-const COMPOSE_SYSTEM = `You are a world-class YouTube thumbnail designer. Given a style analysis JSON and extracted subject images (foreground cutouts with transparent backgrounds), compose a multi-layer 1280x720 thumbnail.
-
-The subject images have their backgrounds already removed. They are labeled as "extracted_subject_0", "extracted_subject_1" etc.
-
-Return ONLY valid JSON with this structure:
-{
-  "headline_text": "Short punchy headline (3-4 words max)",
-  "subtext": "Optional smaller supporting text",
-  "layers": [
-    {
-      "type": "background",
-      "gradient": { "angle": 135, "colors": ["#hex1", "#hex2", "#hex3"] }
-    },
-    {
-      "type": "subject",
-      "index": 0,
-      "x": 60,
-      "y": 100,
-      "scale": 1.0,
-      "rotation": 0,
-      "z_index": 1,
-      "blend_mode": "normal",
-      "opacity": 1.0,
-      "filter": "contrast(1.1) saturate(1.2)"
-    },
-    {
-      "type": "text",
-      "text": "headline",
-      "font": "Bebas Neue",
-      "font_size": 72,
-      "color": "#ffffff",
-      "stroke_color": "#000000",
-      "stroke_width": 4,
-      "shadow": "2px 2px 10px rgba(0,0,0,0.8)",
-      "position": { "x": 60, "y": 280 },
-      "max_width": 920,
-      "text_align": "left",
-      "z_index": 5
-    }
-  ],
-  "effects": {
-    "vignette_strength": 0.6,
-    "grain_opacity": 0.05,
-    "border_glow": true,
-    "border_glow_color": "#f72585"
-  }
-}`;
+async function callAI(messages, maxTokens = 4000) {
+  const resp = await fetch("/api/proxy", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model: AI_MODEL,
+      max_tokens: maxTokens,
+      messages,
+    }),
+  });
+  const data = await resp.json();
+  if (data.error) throw new Error(data.error.message);
+  const text = data.choices?.[0]?.message?.content || "";
+  let parsed;
+  try { parsed = JSON.parse(text.replace(/```json|```/g, "").trim()); }
+  catch { const m = text.match(/\{[\s\S]*\}/); if (m) parsed = JSON.parse(m[0]); else throw new Error("AI response parse failed"); }
+  return parsed;
+}
 
 function ImageCard({ src, onRemove, label, small, videoId, transparent }) {
   return (
@@ -237,10 +280,10 @@ function DropZone({ onFiles, children, accept, multiple, style: extraStyle }) {
   );
 }
 
-function Stepper({ step, onStep }) {
+function Stepper({ step, onStep, steps, labels }) {
   return (
     <div style={{ display: "flex", gap: 4, alignItems: "center", marginBottom: 28, flexWrap: "wrap" }}>
-      {STEPS.map((s, i) => (
+      {steps.map((s, i) => (
         <div key={s} style={{ display: "flex", alignItems: "center", gap: 4 }}>
           <button onClick={() => onStep(i)} style={{
             background: i === step ? "linear-gradient(135deg, #f72585, #7209b7)" : i < step ? "rgba(114,9,183,0.3)" : "rgba(255,255,255,0.05)",
@@ -249,61 +292,74 @@ function Stepper({ step, onStep }) {
             cursor: i <= step ? "pointer" : "default", transition: "all 0.3s",
             fontFamily: "'Space Mono', monospace",
           }}>
-            {i + 1}. {STEP_LABELS[i]}
+            {i + 1}. {labels[i]}
           </button>
-          {i < STEPS.length - 1 && <div style={{ width: 16, height: 1, background: "rgba(255,255,255,0.08)" }} />}
+          {i < steps.length - 1 && <div style={{ width: 16, height: 1, background: "rgba(255,255,255,0.08)" }} />}
         </div>
       ))}
     </div>
   );
 }
 
-function StyleCard({ title, children }) {
+function ConceptCard({ concept, selected, onSelect, index }) {
   return (
-    <div style={{
-      background: "rgba(255,255,255,0.025)", border: "1px solid rgba(255,255,255,0.07)",
-      borderRadius: 12, padding: 16, flex: "1 1 260px",
+    <div onClick={() => onSelect(index)} style={{
+      background: selected ? "rgba(247,37,133,0.08)" : "rgba(255,255,255,0.02)",
+      border: selected ? "2px solid #f72585" : "1px solid rgba(255,255,255,0.07)",
+      borderRadius: 14, padding: 18, cursor: "pointer",
+      transition: "all 0.2s", position: "relative", flex: "1 1 280px",
     }}>
+      {selected && <div style={{
+        position: "absolute", top: 10, right: 10,
+        background: "#f72585", color: "#fff", borderRadius: "50%",
+        width: 24, height: 24, display: "flex", alignItems: "center", justifyContent: "center",
+        fontSize: 13, fontWeight: 700,
+      }}>✓</div>}
       <div style={{
-        fontSize: 10, fontWeight: 700, textTransform: "uppercase",
-        letterSpacing: "0.12em", color: "#f72585", marginBottom: 10,
-        fontFamily: "'Space Mono', monospace",
-      }}>{title}</div>
-      {children}
-    </div>
-  );
-}
-
-function ColorSwatch({ colors, label }) {
-  return (
-    <div style={{ marginBottom: 8 }}>
-      <div style={{ fontSize: 10, color: "rgba(255,255,255,0.35)", marginBottom: 4 }}>{label}</div>
-      <div style={{ display: "flex", gap: 4 }}>
-        {(colors || []).map((c, i) => (
-          <div key={i} title={c} style={{
-            width: 26, height: 26, borderRadius: 6, background: c,
-            border: "1px solid rgba(255,255,255,0.1)", boxShadow: `0 2px 8px ${c}44`,
-          }} />
-        ))}
+        display: "inline-block", background: "rgba(247,37,133,0.12)", color: "#f72585",
+        borderRadius: 8, padding: "2px 10px", fontSize: 10, fontWeight: 700,
+        fontFamily: "'Space Mono', monospace", marginBottom: 8,
+      }}>CONCEPT {index + 1}</div>
+      <div style={{ fontSize: 20, fontWeight: 900, color: "#fff", marginBottom: 6, lineHeight: 1.15 }}>
+        {concept.headline}
       </div>
+      <div style={{ fontSize: 12, color: "rgba(255,255,255,0.55)", lineHeight: 1.6, marginBottom: 10 }}>
+        {concept.description}
+      </div>
+      <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", lineHeight: 1.6, marginBottom: 10 }}>
+        <strong style={{ color: "rgba(255,255,255,0.6)" }}>Hook:</strong> {concept.emotional_hook}
+      </div>
+      {concept.requested_assets?.length > 0 && (
+        <div style={{ fontSize: 10, color: "rgba(255,255,255,0.35)" }}>
+          <strong style={{ color: "rgba(255,255,255,0.5)" }}>Needs images of:</strong>
+          <ul style={{ margin: "4px 0 0", paddingLeft: 16 }}>
+            {concept.requested_assets.map((a, i) => <li key={i} style={{ marginBottom: 2 }}>{a}</li>)}
+          </ul>
+        </div>
+      )}
     </div>
   );
 }
 
-function loadImage(src) {
-  return new Promise((res) => {
-    const img = new Image();
-    img.onload = () => res(img);
-    img.onerror = () => res(null);
-    img.src = src;
-  });
-}
+const btn = (active, loading) => ({
+  background: active ? "linear-gradient(135deg, #f72585, #7209b7)" : "rgba(255,255,255,0.05)",
+  border: "none", color: active ? "#fff" : "rgba(255,255,255,0.3)", borderRadius: 12,
+  padding: "13px 28px", fontSize: 14, fontWeight: 700, cursor: active ? "pointer" : "not-allowed",
+  fontFamily: "'Space Mono', monospace", transition: "all 0.3s", opacity: loading ? 0.7 : 1,
+});
+
+const inputStyle = {
+  width: "100%", boxSizing: "border-box",
+  background: "rgba(0,0,0,0.3)", border: "1px solid rgba(255,255,255,0.1)",
+  borderRadius: 10, padding: "10px 14px", color: "#fff", fontSize: 14,
+  fontFamily: "'Space Mono', monospace", outline: "none",
+};
 
 async function renderLayers(ctx, composed, extracted, sourceImgs, analysis, headline) {
   const layers = [...(composed.layers || [])].sort((a, b) => a.z_index - b.z_index);
 
   if (!layers.length) {
-    await renderLegacy(ctx, composed, sourceImgs, analysis, headline);
+    renderLegacy(ctx, composed, sourceImgs, analysis, headline);
     return;
   }
 
@@ -314,7 +370,7 @@ async function renderLayers(ctx, composed, extracted, sourceImgs, analysis, head
 
     switch (layer.type) {
       case "background": {
-        const bgColors = analysis?.color_palette?.dominant || ["#1a1a2e", "#16213e"];
+        const bgColors = ["#1a1a2e", "#16213e"];
         const colors = layer.gradient?.colors || bgColors;
         const angle = layer.gradient?.angle || 135;
         const rad = (angle * Math.PI) / 180;
@@ -372,9 +428,8 @@ async function renderLayers(ctx, composed, extracted, sourceImgs, analysis, head
           : layer.text || "";
         if (!text) break;
 
-        const fonts = analysis?.typography?.recommended_fonts || ["Impact"];
         const fontSize = layer.font_size || 68;
-        const fontFamily = layer.font || fonts[0];
+        const fontFamily = layer.font || "Impact";
         const maxW = layer.max_width || 920;
         const align = layer.text_align || "left";
 
@@ -486,8 +541,8 @@ async function renderLayers(ctx, composed, extracted, sourceImgs, analysis, head
   }
 }
 
-async function renderLegacy(ctx, composed, sourceImgs, analysis, headline) {
-  const bgColors = analysis?.color_palette?.dominant || ["#1a1a2e", "#16213e"];
+function renderLegacy(ctx, composed, sourceImgs, analysis, headline) {
+  const bgColors = ["#1a1a2e", "#16213e"];
   const accent = composed.accent_color || "#f72585";
 
   const grad = ctx.createLinearGradient(0, 0, 1280, 720);
@@ -495,71 +550,9 @@ async function renderLegacy(ctx, composed, sourceImgs, analysis, headline) {
   ctx.fillStyle = grad;
   ctx.fillRect(0, 0, 1280, 720);
 
-  for (let i = 0; i < sourceImgs.length; i++) {
-    const img = await loadImage(sourceImgs[i].preview);
-    if (!img) continue;
-    ctx.save();
-    ctx.filter = i === 0
-      ? (composed.css_filter_main || "contrast(1.1) saturate(1.2)")
-      : (composed.css_filter_subject || "contrast(1.15) saturate(1.3)");
-    if (sourceImgs.length === 1) {
-      const s = Math.max(1280 / img.width, 720 / img.height);
-      ctx.drawImage(img, (1280 - img.width * s) / 2, (720 - img.height * s) / 2, img.width * s, img.height * s);
-    } else if (i === 0) {
-      const s = Math.max(1280 / img.width, 720 / img.height);
-      ctx.globalAlpha = 0.55;
-      ctx.drawImage(img, (1280 - img.width * s) / 2, (720 - img.height * s) / 2, img.width * s, img.height * s);
-      ctx.globalAlpha = 1;
-    } else {
-      const s = Math.min(660 / img.height, 720 / img.width);
-      ctx.drawImage(img, 1280 - img.width * s - 30, 720 - img.height * s, img.width * s, img.height * s);
-    }
-    ctx.restore();
-  }
-
-  const vg = ctx.createRadialGradient(640, 360, 200, 640, 360, 900);
-  vg.addColorStop(0, "rgba(0,0,0,0)");
-  vg.addColorStop(1, `rgba(0,0,0,${composed.vignette_strength || 0.6})`);
-  ctx.fillStyle = vg;
-  ctx.fillRect(0, 0, 1280, 720);
-
-  const tg = ctx.createLinearGradient(0, 0, 700, 0);
-  tg.addColorStop(0, "rgba(0,0,0,0.65)");
-  tg.addColorStop(1, "rgba(0,0,0,0)");
-  ctx.fillStyle = tg;
-  ctx.fillRect(0, 0, 1280, 720);
-
-  if ((composed.grain_opacity || 0) > 0) {
-    const gc = document.createElement("canvas");
-    gc.width = 1280; gc.height = 720;
-    const gctx = gc.getContext("2d");
-    const id = gctx.createImageData(1280, 720);
-    for (let p = 0; p < id.data.length; p += 4) {
-      const v = Math.random() * 255;
-      id.data[p] = id.data[p + 1] = id.data[p + 2] = v;
-      id.data[p + 3] = 255;
-    }
-    gctx.putImageData(id, 0, 0);
-    ctx.save();
-    ctx.globalAlpha = composed.grain_opacity;
-    ctx.globalCompositeOperation = "overlay";
-    ctx.drawImage(gc, 0, 0);
-    ctx.restore();
-  }
-
-  if (composed.border_glow) {
-    ctx.save();
-    const bc = composed.border_glow_color || accent;
-    ctx.shadowColor = bc; ctx.shadowBlur = 50;
-    ctx.strokeStyle = bc; ctx.lineWidth = 3;
-    ctx.beginPath(); ctx.roundRect(20, 20, 1240, 680, 16); ctx.stroke();
-    ctx.restore();
-  }
-
-  const fonts = analysis?.typography?.recommended_fonts || ["Impact"];
-  const fontSize = composed.text_font_size || 68;
   const displayText = headline || composed?.headline_text || "YOUR HEADLINE";
-  const maxW = sourceImgs.length > 1 ? 600 : 920;
+  const fontSize = composed.text_font_size || 68;
+  const fonts = ["Impact"];
 
   ctx.font = `900 ${fontSize}px ${fonts[0]}, Impact, sans-serif`;
   ctx.textBaseline = "top";
@@ -568,7 +561,7 @@ async function renderLegacy(ctx, composed, sourceImgs, analysis, headline) {
   let line = "";
   for (const w of words) {
     const test = line ? line + " " + w : w;
-    if (ctx.measureText(test).width > maxW && line) { lines.push(line); line = w; } else { line = test; }
+    if (ctx.measureText(test).width > 920 && line) { lines.push(line); line = w; } else { line = test; }
   }
   if (line) lines.push(line);
 
@@ -601,7 +594,7 @@ async function renderLegacy(ctx, composed, sourceImgs, analysis, headline) {
 
   if (composed?.subtext) {
     ctx.shadowColor = "transparent";
-    ctx.font = `700 ${Math.round(fontSize * 0.35)}px ${fonts[1] || fonts[0]}, sans-serif`;
+    ctx.font = `700 ${Math.round(fontSize * 0.35)}px ${fonts[0]}, sans-serif`;
     ctx.fillStyle = composed.subtext_color || accent;
     ctx.fillText(composed.subtext.toUpperCase(), 60, startY + totalH + 16);
   }
@@ -610,52 +603,41 @@ async function renderLegacy(ctx, composed, sourceImgs, analysis, headline) {
 
 export default function ThumbCraft() {
   const [step, setStep] = useState(0);
+  const [videoUrl, setVideoUrl] = useState("");
+  const [transcript, setTranscript] = useState(null);
+  const [transcriptText, setTranscriptText] = useState("");
+  const [videoThumbnail, setVideoThumbnail] = useState(null);
   const [refs, setRefs] = useState([]);
-  const [sourceImages, setSourceImages] = useState([]);
-  const [analysis, setAnalysis] = useState(null);
-  const [analyzing, setAnalyzing] = useState(false);
-  const [composing, setComposing] = useState(false);
-  const [composed, setComposed] = useState(null);
-  const [headlineText, setHeadlineText] = useState("");
-  const [error, setError] = useState("");
-  const [analyzeProgress, setAnalyzeProgress] = useState("");
-  const canvasRef = useRef();
-  const [canvasReady, setCanvasReady] = useState(false);
-  const [ytInput, setYtInput] = useState("");
   const [ytLoading, setYtLoading] = useState(false);
   const [ytStatus, setYtStatus] = useState("");
 
+  const [analyzing, setAnalyzing] = useState(false);
+  const [videoAnalysis, setVideoAnalysis] = useState(null);
+
+  const [generatingConcepts, setGeneratingConcepts] = useState(false);
+  const [concepts, setConcepts] = useState([]);
+  const [selectedConcept, setSelectedConcept] = useState(null);
+
+  const [sourceImages, setSourceImages] = useState([]);
   const [extractedSubjects, setExtractedSubjects] = useState([]);
   const [extracting, setExtracting] = useState(false);
   const [modelStatus, setModelStatus] = useState("");
   const [selectedSubjects, setSelectedSubjects] = useState(new Set());
+  const [headlineText, setHeadlineText] = useState("");
 
-  const processYoutubeUrls = async () => {
-    const lines = ytInput.split(/[\n,]+/).map((l) => l.trim()).filter(Boolean);
-    if (!lines.length) return;
-    setYtLoading(true); setError("");
-    let added = 0, failed = 0;
-    const newRefs = [];
+  const [composing, setComposing] = useState(false);
+  const [composed, setComposed] = useState(null);
+  const [critiquing, setCritiquing] = useState(false);
+  const [critiqueIteration, setCritiqueIteration] = useState(0);
+  const [critiqueResult, setCritiqueResult] = useState(null);
+  const [finalScore, setFinalScore] = useState(null);
 
-    for (const line of lines) {
-      if (refs.length + newRefs.length >= 15) { setYtStatus("Reached 15 limit"); break; }
-      const videoId = extractVideoId(line);
-      if (!videoId) { failed++; continue; }
-      setYtStatus(`Fetching ${added + failed + 1}/${lines.length}...`);
-      try {
-        const result = await fetchYtThumbnail(videoId);
-        const small = await resizeImage(result.base64, 512);
-        newRefs.push({ base64: small, preview: result.preview, videoId: result.videoId, source: "youtube" });
-        added++;
-      } catch { failed++; }
-    }
+  const [error, setError] = useState("");
+  const [status, setStatus] = useState("");
+  const canvasRef = useRef();
+  const [canvasReady, setCanvasReady] = useState(false);
 
-    setRefs((prev) => [...prev, ...newRefs]);
-    setYtInput("");
-    setYtStatus(`Added ${added} thumbnail${added !== 1 ? "s" : ""}${failed ? `, ${failed} failed` : ""}`);
-    setYtLoading(false);
-    setTimeout(() => setYtStatus(""), 4000);
-  };
+  const videoId = videoUrl ? extractVideoId(videoUrl) : null;
 
   const addRefs = useCallback(async (files) => {
     setError("");
@@ -669,51 +651,72 @@ export default function ThumbCraft() {
     setRefs((prev) => [...prev, ...newRefs]);
   }, [refs]);
 
+  const analyzeVideo = async () => {
+    if (!videoId) { setError("Enter a valid YouTube URL"); return; }
+    setAnalyzing(true); setError(""); setStatus("Fetching transcript...");
+    try {
+      const segments = await fetchYouTubeTranscript(videoId);
+      const formatted = formatTranscript(segments, 8000);
+      setTranscript(segments);
+      setTranscriptText(formatted);
+
+      setStatus("Fetching video thumbnail...");
+      const thumb = await fetchYtThumbnail(videoId);
+      setVideoThumbnail(thumb);
+
+      setStatus("Analyzing video content...");
+      const content = [
+        { type: "image_url", image_url: { url: `data:image/jpeg;base64,${thumb.base64}` } },
+        { type: "text", text: `Video transcript:\n\n${formatted}\n\nAnalyze this video for thumbnail creation. Return ONLY JSON.` },
+      ];
+
+      const result = await callAI([
+        { role: "system", content: VIDEO_ANALYZE_SYSTEM },
+        { role: "user", content },
+      ], 3000);
+
+      setVideoAnalysis(result);
+      setStep(1);
+    } catch (e) { setError(`Analysis failed: ${e.message}`); }
+    finally { setAnalyzing(false); setStatus(""); }
+  };
+
+  const generateConcepts = async () => {
+    setGeneratingConcepts(true); setError(""); setStatus("Generating concepts...");
+    try {
+      let conceptPrompt = `Video Analysis:\n${JSON.stringify(videoAnalysis, null, 2)}\n\nTranscript:\n${transcriptText.slice(0, 4000)}`;
+
+      if (refs.length > 0) {
+        conceptPrompt += `\n\nReference style analysis not available, but ${refs.length} reference thumbnails were provided. Consider their style in your concepts.`;
+      }
+
+      const result = await callAI([
+        { role: "system", content: CONCEPT_GENERATE_SYSTEM },
+        { role: "user", content: [{ type: "text", text: conceptPrompt }] },
+      ], 4000);
+
+      if (result.concepts) {
+        setConcepts(result.concepts);
+        setSelectedConcept(0);
+        if (result.concepts[0]?.headline) setHeadlineText(result.concepts[0].headline);
+      } else {
+        throw new Error("No concepts returned");
+      }
+      setStep(2);
+    } catch (e) { setError(`Concept generation failed: ${e.message}`); }
+    finally { setGeneratingConcepts(false); setStatus(""); }
+  };
+
   const addSources = useCallback(async (files) => {
     setError("");
     const newSrcs = [];
     for (const f of files) {
-      if (sourceImages.length + newSrcs.length >= 2) break;
+      if (sourceImages.length + newSrcs.length >= 4) break;
       const b64 = await toBase64(f);
       newSrcs.push({ base64: b64, preview: URL.createObjectURL(f) });
     }
     setSourceImages((prev) => [...prev, ...newSrcs]);
   }, [sourceImages]);
-
-  const analyzeStyle = async () => {
-    if (refs.length < 3) { setError("Add at least 3 reference thumbnails."); return; }
-    setAnalyzing(true); setError(""); setAnalyzeProgress("Preparing images...");
-    try {
-      const content = refs.map((r) => ({
-        type: "image_url",
-        image_url: { url: `data:image/jpeg;base64,${r.base64}` },
-      }));
-      content.push({
-        type: "text",
-        text: `I've provided ${refs.length} YouTube thumbnail references. Analyze their COLLECTIVE visual style with extreme precision. Return ONLY raw JSON.`,
-      });
-      setAnalyzeProgress(`Analyzing ${refs.length} thumbnails...`);
-      const resp = await fetch("/api/proxy", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free", max_tokens: 4000,
-          messages: [
-            { role: "system", content: ANALYZE_SYSTEM },
-            { role: "user", content },
-          ],
-        }),
-      });
-      const data = await resp.json();
-      if (data.error) throw new Error(data.error.message);
-      const text = data.choices?.[0]?.message?.content || "";
-      let parsed;
-      try { parsed = JSON.parse(text.replace(/```json|```/g, "").trim()); }
-      catch { const m = text.match(/\{[\s\S]*\}/); if (m) parsed = JSON.parse(m[0]); else throw new Error("Parse failed"); }
-      setAnalysis(parsed); setStep(1);
-    } catch (e) { setError(`Analysis failed: ${e.message}`); }
-    finally { setAnalyzing(false); setAnalyzeProgress(""); }
-  };
 
   const startExtraction = async () => {
     setExtracting(true); setError(""); setModelStatus("Loading AI model...");
@@ -750,12 +753,13 @@ export default function ThumbCraft() {
     setSelectedSubjects(next);
   };
 
-  const composeThumbnail = async () => {
-    if (!sourceImages.length) { setError("Add at least 1 source image."); return; }
-    setComposing(true); setError("");
+  const craftThumbnail = async () => {
+    setComposing(true); setError(""); setStatus("Composing thumbnail...");
+    setCritiqueIteration(0);
+    setCritiqueResult(null);
+    setFinalScore(null);
     try {
       const content = [];
-
       const subjectsToSend = extractedSubjects.length > 0
         ? [...selectedSubjects].map((i) => extractedSubjects[i])
         : [];
@@ -763,10 +767,7 @@ export default function ThumbCraft() {
       if (subjectsToSend.length > 0) {
         for (const s of subjectsToSend) {
           const resized = await resizeToPng(s.dataUrl, 512);
-          content.push({
-            type: "image_url",
-            image_url: { url: resized },
-          });
+          content.push({ type: "image_url", image_url: { url: resized } });
         }
       } else {
         for (const s of sourceImages) {
@@ -775,45 +776,84 @@ export default function ThumbCraft() {
         }
       }
 
+      const selectedConceptData = concepts[selectedConcept] || {};
       content.push({
         type: "text",
-        text: `${subjectsToSend.length > 0 ? subjectsToSend.length + " extracted subject(s)." : sourceImages.length + " source image(s)."}\nStyle:\n${JSON.stringify(analysis, null, 2)}\nHeadline: "${headlineText || "(suggest one)"}"\nReturn ONLY JSON.`,
+        text: `${subjectsToSend.length > 0 ? subjectsToSend.length + " extracted subject(s)" : sourceImages.length + " source image(s)"}\nConcept: ${JSON.stringify(selectedConceptData)}\nVideo Analysis: ${JSON.stringify(videoAnalysis)}\nHeadline: "${headlineText || selectedConceptData.headline || ""}"\nReturn ONLY JSON.`,
       });
-      const resp = await fetch("/api/proxy", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free", max_tokens: 4000,
-          messages: [
-            { role: "system", content: COMPOSE_SYSTEM },
-            { role: "user", content },
-          ],
-        }),
-      });
-      const data = await resp.json();
-      if (data.error) throw new Error(data.error.message);
-      const text = data.choices?.[0]?.message?.content || "";
-      let parsed;
-      try { parsed = JSON.parse(text.replace(/```json|```/g, "").trim()); }
-      catch { const m = text.match(/\{[\s\S]*\}/); if (m) parsed = JSON.parse(m[0]); else throw new Error("Parse failed"); }
-      setComposed(parsed);
-      if (parsed.headline_text && !headlineText) setHeadlineText(parsed.headline_text);
-      setStep(2);
+
+      const result = await callAI([
+        { role: "system", content: COMPOSE_SYSTEM },
+        { role: "user", content },
+      ], 4000);
+
+      setComposed(result);
+      if (result.headline_text && !headlineText) setHeadlineText(result.headline_text);
+      setStep(3);
     } catch (e) { setError(`Composition failed: ${e.message}`); }
-    finally { setComposing(false); }
+    finally { setComposing(false); setStatus(""); }
   };
 
   useEffect(() => {
-    if (step !== 2 || !composed || !canvasRef.current) return;
+    if (step !== 3 || !composed || !canvasRef.current) return;
     const canvas = canvasRef.current;
     const ctx = canvas.getContext("2d");
-    canvas.width = 1280; canvas.height = 720;
+    canvas.width = 1280;
+    canvas.height = 720;
 
     (async () => {
-      await renderLayers(ctx, composed, extractedSubjects, sourceImages, analysis, headlineText);
+      await renderLayers(ctx, composed, extractedSubjects, sourceImages, videoAnalysis, headlineText);
       setCanvasReady(true);
     })();
-  }, [step, composed, analysis, sourceImages, extractedSubjects, headlineText]);
+  }, [step, composed, videoAnalysis, sourceImages, extractedSubjects, headlineText]);
+
+  const runCritique = async () => {
+    if (!canvasRef.current || critiqueIteration >= 3) return;
+    setCritiquing(true); setError(""); setStatus(`Critique iteration ${critiqueIteration + 1}/3...`);
+    try {
+      const dataUrl = canvasRef.current.toDataURL("image/jpeg", 0.85);
+      const result = await callAI([
+        { role: "system", content: CRITIQUE_SYSTEM },
+        {
+          role: "user",
+          content: [
+            { type: "image_url", image_url: { url: dataUrl } },
+            { type: "text", text: `Current composition:\n${JSON.stringify(composed, null, 2)}\n\nCritique this thumbnail and return refined_layers to improve it. Score it 1-10. Return ONLY JSON.` },
+          ],
+        },
+      ], 4000);
+
+      setCritiqueResult(result);
+      setFinalScore(result.score);
+
+      if (result.score >= 8 || critiqueIteration >= 2) {
+        setCritiquing(false);
+        setStatus("Finished! Score: " + result.score + "/10");
+        setTimeout(() => setStatus(""), 3000);
+        return;
+      }
+
+      if (result.refined_layers && Array.isArray(result.refined_layers) && result.refined_layers.length > 0) {
+        const updated = { ...composed, layers: result.refined_layers };
+        setComposed(updated);
+        setCritiqueIteration((prev) => prev + 1);
+      }
+    } catch (e) { setError(`Critique failed: ${e.message}`); }
+    setCritiquing(false);
+  };
+
+  useEffect(() => {
+    if (step === 3 && canvasReady && critiqueIteration === 0 && !critiquing && !critiqueResult) {
+      runCritique();
+    }
+  }, [step, canvasReady, critiqueIteration]);
+
+  useEffect(() => {
+    if (critiqueIteration > 0 && canvasReady && !critiquing) {
+      const timer = setTimeout(() => runCritique(), 500);
+      return () => clearTimeout(timer);
+    }
+  }, [critiqueIteration, canvasReady]);
 
   const exportThumbnail = () => {
     if (!canvasRef.current) return;
@@ -821,20 +861,6 @@ export default function ThumbCraft() {
     link.download = "thumbnail-1280x720.png";
     link.href = canvasRef.current.toDataURL("image/png");
     link.click();
-  };
-
-  const btn = (active, loading) => ({
-    background: active ? "linear-gradient(135deg, #f72585, #7209b7)" : "rgba(255,255,255,0.05)",
-    border: "none", color: active ? "#fff" : "rgba(255,255,255,0.3)", borderRadius: 12,
-    padding: "13px 28px", fontSize: 14, fontWeight: 700, cursor: active ? "pointer" : "not-allowed",
-    fontFamily: "'Space Mono', monospace", transition: "all 0.3s", opacity: loading ? 0.7 : 1,
-  });
-
-  const inputStyle = {
-    width: "100%", boxSizing: "border-box",
-    background: "rgba(0,0,0,0.3)", border: "1px solid rgba(255,255,255,0.1)",
-    borderRadius: 10, padding: "10px 14px", color: "#fff", fontSize: 14,
-    fontFamily: "'Space Mono', monospace", outline: "none",
   };
 
   return (
@@ -858,12 +884,12 @@ export default function ThumbCraft() {
             WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent",
           }}>ThumbCraft</h1>
           <p style={{ margin: 0, fontSize: 11, color: "rgba(255,255,255,0.3)", fontFamily: "'Space Mono', monospace" }}>
-            AI-powered style transfer for YouTube thumbnails
+            YouTube-first thumbnail generator from video transcripts
           </p>
         </div>
       </div>
 
-      <Stepper step={step} onStep={(s) => { if (s <= step || (s === 1 && analysis) || (s === 2 && composed)) setStep(s); }} />
+      <Stepper step={step} onStep={(s) => { if (s <= step || (s === 1 && videoAnalysis) || (s === 2 && concepts.length) || (s === 3 && composed)) setStep(s); }} steps={STEPS} labels={STEP_LABELS} />
 
       {error && (
         <div style={{
@@ -872,11 +898,25 @@ export default function ThumbCraft() {
         }}>{error}</div>
       )}
 
-      {/* ==================== STEP 0: REFERENCES ==================== */}
+      {status && (
+        <div style={{
+          background: "rgba(114,9,183,0.08)", border: "1px solid rgba(114,9,183,0.2)",
+          borderRadius: 10, padding: "10px 16px", marginBottom: 18, fontSize: 13, color: "#b5179e",
+          display: "flex", alignItems: "center", gap: 10,
+        }}>
+          <div style={{
+            width: 14, height: 14, border: "2px solid #b5179e", borderTopColor: "transparent",
+            borderRadius: "50%", animation: "spin 0.8s linear infinite", flexShrink: 0,
+          }} />
+          {status}
+        </div>
+      )}
+
+      {/* ==================== STEP 0: INPUT ==================== */}
       {step === 0 && (
         <div>
           <p style={{ fontSize: 14, color: "rgba(255,255,255,0.5)", marginBottom: 20, lineHeight: 1.6 }}>
-            Add <strong style={{ color: "#fff" }}>10–15 YouTube thumbnails</strong> as style references. Paste video links or upload screenshots.
+            Paste a <strong style={{ color: "#fff" }}>YouTube video link</strong> to analyze its content and generate a custom thumbnail.
           </p>
 
           <div style={{
@@ -884,177 +924,179 @@ export default function ThumbCraft() {
             borderRadius: 14, padding: 20, marginBottom: 16,
           }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
-              <span style={{ fontSize: 18 }}>🔗</span>
-              <span style={{ fontSize: 14, fontWeight: 700, color: "#fff" }}>Paste YouTube Links</span>
-              <span style={{
-                fontSize: 10, background: "rgba(247,37,133,0.15)", color: "#f72585",
-                padding: "2px 8px", borderRadius: 20, fontWeight: 600,
-              }}>RECOMMENDED</span>
+              <span style={{ fontSize: 18 }}>🎬</span>
+              <span style={{ fontSize: 14, fontWeight: 700, color: "#fff" }}>YouTube Video</span>
             </div>
 
-            <textarea
-              value={ytInput}
-              onChange={(e) => setYtInput(e.target.value)}
-              placeholder={"Paste YouTube URLs, one per line:\nhttps://www.youtube.com/watch?v=abc123\nhttps://youtu.be/def456\nhttps://youtube.com/shorts/ghi789"}
-              rows={5}
-              style={{
-                ...inputStyle, resize: "vertical", lineHeight: 1.6, fontSize: 13,
-              }}
-            />
-
-            <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 12 }}>
-              <button onClick={processYoutubeUrls} disabled={ytLoading || !ytInput.trim()}
-                style={btn(!!ytInput.trim() && !ytLoading, ytLoading)}>
-                {ytLoading ? ytStatus : "Extract Thumbnails"}
-              </button>
-              {ytStatus && !ytLoading && (
-                <span style={{ fontSize: 12, color: "rgba(255,255,255,0.4)" }}>{ytStatus}</span>
-              )}
-            </div>
+            <input type="text" value={videoUrl} onChange={(e) => setVideoUrl(e.target.value)}
+              placeholder="https://www.youtube.com/watch?v=..."
+              style={inputStyle} />
 
             <div style={{ marginTop: 10, fontSize: 11, color: "rgba(255,255,255,0.2)", lineHeight: 1.5 }}>
-              Supports: youtube.com/watch, youtu.be, /shorts/, /embed/, /live/ links
+              Supports: youtube.com/watch, youtu.be, /shorts/, /embed/, /live/ links or raw video ID
             </div>
           </div>
 
           <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 16 }}>
             <div style={{ flex: 1, height: 1, background: "rgba(255,255,255,0.06)" }} />
-            <span style={{ fontSize: 11, color: "rgba(255,255,255,0.2)", fontFamily: "'Space Mono', monospace" }}>OR UPLOAD IMAGES</span>
+            <span style={{ fontSize: 11, color: "rgba(255,255,255,0.2)", fontFamily: "'Space Mono', monospace" }}>OPTIONAL: STYLE REFERENCES</span>
             <div style={{ flex: 1, height: 1, background: "rgba(255,255,255,0.06)" }} />
           </div>
 
-          <DropZone onFiles={addRefs} multiple accept="image/*">
-            <div style={{ fontSize: 24, marginBottom: 6 }}>🎨</div>
-            <div style={{ fontSize: 13, fontWeight: 600, color: "rgba(255,255,255,0.6)" }}>Drop thumbnail screenshots here</div>
-            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.25)", marginTop: 4 }}>or click to browse</div>
+          <DropZone onFiles={addRefs} multiple accept="image/*" style={{ marginBottom: 14 }}>
+            <div style={{ fontSize: 22, marginBottom: 4 }}>🎨</div>
+            <div style={{ fontSize: 13, fontWeight: 600, color: "rgba(255,255,255,0.6)" }}>Upload reference thumbnail images (optional)</div>
+            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.25)", marginTop: 4 }}>Helps match a specific style</div>
           </DropZone>
 
           {refs.length > 0 && (
-            <div style={{ marginTop: 20 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-                <span style={{ fontSize: 12, fontWeight: 700, color: "rgba(255,255,255,0.5)", fontFamily: "'Space Mono', monospace" }}>
-                  {refs.length} REFERENCE{refs.length !== 1 ? "S" : ""} LOADED
+            <div style={{ marginBottom: 16 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                <span style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", fontFamily: "'Space Mono', monospace" }}>
+                  {refs.length} REFERENCE{refs.length > 1 ? "S" : ""}
                 </span>
                 <button onClick={() => setRefs([])} style={{
                   background: "none", border: "none", color: "rgba(255,255,255,0.3)",
                   fontSize: 11, cursor: "pointer", fontFamily: "'Space Mono', monospace",
-                }}>Clear all</button>
+                }}>Clear</button>
               </div>
-              <div style={{
-                display: "flex", flexWrap: "wrap", gap: 10,
-                padding: 14, background: "rgba(255,255,255,0.015)",
-                borderRadius: 14, border: "1px solid rgba(255,255,255,0.05)",
-              }}>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
                 {refs.map((r, i) => (
-                  <ImageCard key={i} src={r.preview} small
-                    label={r.videoId ? r.videoId.slice(0, 8) + "…" : `Upload ${i + 1}`}
-                    videoId={r.videoId}
-                    onRemove={() => setRefs((p) => p.filter((_, j) => j !== i))}
-                  />
+                  <ImageCard key={i} src={r.preview} small label={`Ref ${i + 1}`}
+                    onRemove={() => setRefs((p) => p.filter((_, j) => j !== i))} />
                 ))}
               </div>
             </div>
           )}
 
-          <button onClick={analyzeStyle} disabled={analyzing || refs.length < 3}
-            style={{ ...btn(refs.length >= 3 && !analyzing, analyzing), marginTop: 24 }}>
-            {analyzing ? analyzeProgress : `Analyze Style DNA (${refs.length} refs)`}
+          <button onClick={analyzeVideo} disabled={analyzing || !videoId}
+            style={btn(!!videoId && !analyzing, analyzing)}>
+            {analyzing ? "Analyzing..." : "Analyze Video →"}
           </button>
-
-          {refs.length > 0 && refs.length < 3 && (
-            <div style={{ marginTop: 10, fontSize: 12, color: "rgba(255,255,255,0.3)" }}>
-              Add {3 - refs.length} more reference{3 - refs.length > 1 ? "s" : ""} to enable analysis
-            </div>
-          )}
         </div>
       )}
 
-      {/* ==================== STEP 1: ANALYSIS + SOURCE IMAGES + EXTRACT ==================== */}
-      {step === 1 && analysis && (
+      {/* ==================== STEP 1: ANALYSIS ==================== */}
+      {step === 1 && videoAnalysis && (
         <div>
           <div style={{
             background: "rgba(114,9,183,0.07)", border: "1px solid rgba(114,9,183,0.18)",
             borderRadius: 14, padding: 20, marginBottom: 22,
           }}>
-            <div style={{ fontSize: 10, fontWeight: 700, color: "#b5179e", marginBottom: 8, fontFamily: "'Space Mono', monospace", letterSpacing: "0.1em" }}>STYLE DNA</div>
-            <p style={{ fontSize: 14, lineHeight: 1.7, color: "rgba(255,255,255,0.75)", margin: 0 }}>{analysis.overall_style}</p>
+            <div style={{ fontSize: 10, fontWeight: 700, color: "#b5179e", marginBottom: 8, fontFamily: "'Space Mono', monospace", letterSpacing: "0.1em" }}>VIDEO SUMMARY</div>
+            <p style={{ fontSize: 14, lineHeight: 1.7, color: "rgba(255,255,255,0.75)", margin: 0 }}>{videoAnalysis.summary}</p>
           </div>
 
           <div style={{ display: "flex", flexWrap: "wrap", gap: 12, marginBottom: 22 }}>
-            <StyleCard title="Color Palette">
-              <ColorSwatch colors={analysis.color_palette?.dominant} label="Dominant" />
-              <ColorSwatch colors={analysis.color_palette?.accent} label="Accent" />
-              <div style={{ fontSize: 11, color: "rgba(255,255,255,0.45)", marginTop: 8 }}>
-                {analysis.color_palette?.color_grading} · {analysis.color_palette?.saturation} · {analysis.color_palette?.contrast_level} contrast
+            <div style={{
+              background: "rgba(255,255,255,0.025)", border: "1px solid rgba(255,255,255,0.07)",
+              borderRadius: 12, padding: 16, flex: "1 1 260px",
+            }}>
+              <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.12em", color: "#f72585", marginBottom: 10, fontFamily: "'Space Mono', monospace" }}>Topics</div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                {(videoAnalysis.topics || []).map((t, i) => (
+                  <span key={i} style={{
+                    background: "rgba(247,37,133,0.08)", color: "#f72585",
+                    padding: "3px 10px", borderRadius: 20, fontSize: 11, fontWeight: 600,
+                  }}>{t}</span>
+                ))}
               </div>
-            </StyleCard>
-            <StyleCard title="Composition">
-              <div style={{ fontSize: 12, color: "rgba(255,255,255,0.55)", lineHeight: 1.7 }}>
-                <div><strong style={{ color: "#fff" }}>Layout:</strong> {analysis.composition?.layout}</div>
-                <div><strong style={{ color: "#fff" }}>Focal:</strong> {analysis.composition?.focal_point}</div>
-                <div><strong style={{ color: "#fff" }}>Depth:</strong> {analysis.composition?.depth}</div>
-              </div>
-            </StyleCard>
-            <StyleCard title="Typography">
-              <div style={{ fontSize: 12, color: "rgba(255,255,255,0.55)", lineHeight: 1.7 }}>
-                <div><strong style={{ color: "#fff" }}>Style:</strong> {analysis.typography?.headline_style}</div>
-                <div><strong style={{ color: "#fff" }}>Weight:</strong> {analysis.typography?.font_weight}</div>
-                <div><strong style={{ color: "#fff" }}>Effects:</strong> {analysis.typography?.text_effects?.join(", ")}</div>
-                <div><strong style={{ color: "#fff" }}>Fonts:</strong> {analysis.typography?.recommended_fonts?.join(", ")}</div>
-              </div>
-            </StyleCard>
-            <StyleCard title="Photo Treatment">
-              <div style={{ fontSize: 12, color: "rgba(255,255,255,0.55)", lineHeight: 1.7 }}>
-                <div><strong style={{ color: "#fff" }}>Lighting:</strong> {analysis.photo_treatment?.lighting}</div>
-                <div><strong style={{ color: "#fff" }}>Filters:</strong> {analysis.photo_treatment?.filters?.join(", ")}</div>
-                <div><strong style={{ color: "#fff" }}>Outlines:</strong> {analysis.photo_treatment?.border_or_outline}</div>
-                {analysis.photo_treatment?.subject_cutout && <div style={{ color: "#f72585" }}>✂ Subject cutout detected</div>}
-              </div>
-            </StyleCard>
-            <StyleCard title="Effects & Overlays">
-              <div style={{ fontSize: 12, color: "rgba(255,255,255,0.55)", lineHeight: 1.7 }}>
-                <div><strong style={{ color: "#fff" }}>Overlays:</strong> {analysis.effects?.overlays?.join(", ")}</div>
-                <div><strong style={{ color: "#fff" }}>Shapes:</strong> {analysis.effects?.shapes?.join(", ")}</div>
-                <div><strong style={{ color: "#fff" }}>Texture:</strong> {analysis.effects?.texture}</div>
-                {analysis.effects?.glow_or_neon && <div style={{ color: "#f72585" }}>✨ Glow/neon</div>}
-              </div>
-            </StyleCard>
-            <StyleCard title="Emotional Tone">
-              <div style={{ fontSize: 17, fontWeight: 700, color: "#f72585", textTransform: "uppercase", fontFamily: "'Space Mono', monospace" }}>
-                {analysis.emotional_tone}
-              </div>
-            </StyleCard>
+            </div>
+
+            <div style={{
+              background: "rgba(255,255,255,0.025)", border: "1px solid rgba(255,255,255,0.07)",
+              borderRadius: 12, padding: 16, flex: "1 1 160px",
+            }}>
+              <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.12em", color: "#f72585", marginBottom: 10, fontFamily: "'Space Mono', monospace" }}>Tone</div>
+              <div style={{ fontSize: 16, fontWeight: 700, color: "#fff", textTransform: "uppercase", fontFamily: "'Space Mono', monospace" }}>{videoAnalysis.tone}</div>
+            </div>
+
+            <div style={{
+              background: "rgba(255,255,255,0.025)", border: "1px solid rgba(255,255,255,0.07)",
+              borderRadius: 12, padding: 16, flex: "1 1 200px",
+            }}>
+              <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.12em", color: "#f72585", marginBottom: 10, fontFamily: "'Space Mono', monospace" }}>Audience</div>
+              <div style={{ fontSize: 12, color: "rgba(255,255,255,0.55)", lineHeight: 1.6 }}>{videoAnalysis.target_audience}</div>
+            </div>
           </div>
+
+          {videoAnalysis.key_moments?.length > 0 && (
+            <div style={{
+              background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.07)",
+              borderRadius: 14, padding: 18, marginBottom: 22,
+            }}>
+              <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.12em", color: "#7209b7", marginBottom: 12, fontFamily: "'Space Mono', monospace" }}>KEY MOMENTS FOR THUMBNAIL</div>
+              {videoAnalysis.key_moments.map((m, i) => (
+                <div key={i} style={{
+                  padding: "10px 0", borderBottom: i < videoAnalysis.key_moments.length - 1 ? "1px solid rgba(255,255,255,0.05)" : "none",
+                }}>
+                  <div style={{ fontSize: 11, color: "#f72585", fontFamily: "'Space Mono', monospace", marginBottom: 3 }}>
+                    @{Math.floor(m.timestamp_seconds / 60)}:{String(Math.floor(m.timestamp_seconds % 60)).padStart(2, "0")}
+                  </div>
+                  <div style={{ fontSize: 13, color: "rgba(255,255,255,0.65)", marginBottom: 3 }}>{m.description}</div>
+                  <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", fontStyle: "italic" }}>{m.thumbnail_potential}</div>
+                </div>
+              ))}
+            </div>
+          )}
 
           <div style={{
-            background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.07)",
+            background: "rgba(247,37,133,0.03)", border: "1px solid rgba(247,37,133,0.12)",
             borderRadius: 14, padding: 18, marginBottom: 22,
           }}>
-            <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.12em", color: "#7209b7", marginBottom: 10, fontFamily: "'Space Mono', monospace" }}>THUMBNAIL RECIPE</div>
-            <p style={{ fontSize: 12, lineHeight: 1.8, color: "rgba(255,255,255,0.55)", margin: 0, whiteSpace: "pre-wrap" }}>{analysis.thumbnail_recipe}</p>
+            <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.12em", color: "#f72585", marginBottom: 8, fontFamily: "'Space Mono', monospace" }}>SUGGESTED VISUAL DIRECTION</div>
+            <p style={{ fontSize: 13, lineHeight: 1.7, color: "rgba(255,255,255,0.6)", margin: 0 }}>{videoAnalysis.suggested_visual_direction}</p>
           </div>
 
-          {/* Source Images + Extraction */}
+          <button onClick={generateConcepts} disabled={generatingConcepts}
+            style={btn(!generatingConcepts, generatingConcepts)}>
+            {generatingConcepts ? "Generating Concepts..." : "Generate Thumbnail Concepts →"}
+          </button>
+        </div>
+      )}
+
+      {/* ==================== STEP 2: CONCEPTS ==================== */}
+      {step === 2 && concepts.length > 0 && (
+        <div>
+          <p style={{ fontSize: 14, color: "rgba(255,255,255,0.5)", marginBottom: 16, lineHeight: 1.6 }}>
+            Select a concept and upload the images it needs.
+          </p>
+
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 14, marginBottom: 24 }}>
+            {concepts.map((c, i) => (
+              <ConceptCard key={i} concept={c} selected={selectedConcept === i}
+                onSelect={(idx) => { setSelectedConcept(idx); if (concepts[idx]?.headline) setHeadlineText(concepts[idx].headline); }} index={i} />
+            ))}
+          </div>
+
           <div style={{
             background: "rgba(247,37,133,0.03)", border: "1px solid rgba(247,37,133,0.12)",
             borderRadius: 14, padding: 20,
           }}>
-            <div style={{ fontSize: 14, fontWeight: 700, color: "#fff", marginBottom: 14 }}>Add source images (1–2)</div>
+            <div style={{ fontSize: 14, fontWeight: 700, color: "#fff", marginBottom: 6 }}>
+              Upload subject images
+            </div>
+            <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginBottom: 14, lineHeight: 1.5 }}>
+              {concepts[selectedConcept]?.requested_assets?.length > 0 ? (
+                <span>Based on your selected concept, we recommend: <strong style={{ color: "rgba(255,255,255,0.6)" }}>{concepts[selectedConcept].requested_assets.join(", ")}</strong></span>
+              ) : "Upload photos of yourself, products, or anything to feature in the thumbnail."}
+            </div>
+
             <DropZone onFiles={addSources} multiple accept="image/*" style={{ marginBottom: 14 }}>
               <div style={{ fontSize: 22, marginBottom: 4 }}>📸</div>
               <div style={{ fontSize: 13, fontWeight: 600, color: "rgba(255,255,255,0.6)" }}>Drop your images here</div>
-              <div style={{ fontSize: 11, color: "rgba(255,255,255,0.25)", marginTop: 4 }}>{sourceImages.length}/2</div>
+              <div style={{ fontSize: 11, color: "rgba(255,255,255,0.25)", marginTop: 4 }}>up to 4 images</div>
             </DropZone>
+
             {sourceImages.length > 0 && (
-              <div style={{ display: "flex", gap: 10, marginBottom: 14 }}>
+              <div style={{ display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
                 {sourceImages.map((s, i) => (
-                  <ImageCard key={i} src={s.preview} label={`Source ${i + 1}`}
+                  <ImageCard key={i} src={s.preview} label={`Image ${i + 1}`}
                     onRemove={() => setSourceImages((p) => p.filter((_, j) => j !== i))} />
                 ))}
               </div>
             )}
 
-            {/* Extract Subjects */}
             {sourceImages.length > 0 && (
               <div style={{ marginBottom: 14 }}>
                 <button onClick={startExtraction} disabled={extracting}
@@ -1066,7 +1108,7 @@ export default function ThumbCraft() {
                   }}>
                   {extracting ? modelStatus : extractedSubjects.length > 0
                     ? "Re-extract Subjects"
-                    : "Extract Subjects (AI Background Removal)"}
+                    : "Remove Backgrounds (AI)"}
                 </button>
                 {modelStatus && !extracting && (
                   <span style={{ marginLeft: 10, fontSize: 11, color: "rgba(255,255,255,0.4)" }}>{modelStatus}</span>
@@ -1074,7 +1116,6 @@ export default function ThumbCraft() {
               </div>
             )}
 
-            {/* Extracted Subjects Preview */}
             {extractedSubjects.length > 0 && (
               <div style={{ marginBottom: 14 }}>
                 <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginBottom: 8, fontFamily: "'Space Mono', monospace" }}>
@@ -1082,12 +1123,12 @@ export default function ThumbCraft() {
                 </div>
                 <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
                   {extractedSubjects.map((s, i) => {
-                    const selected = selectedSubjects.has(i);
+                    const sel = selectedSubjects.has(i);
                     return (
                       <div key={i} onClick={() => toggleSubject(i)} style={{
-                        cursor: "pointer", opacity: selected ? 1 : 0.35,
+                        cursor: "pointer", opacity: sel ? 1 : 0.35,
                         transition: "all 0.2s",
-                        border: selected ? "2px solid #f72585" : "2px solid transparent",
+                        border: sel ? "2px solid #f72585" : "2px solid transparent",
                         borderRadius: 10, overflow: "hidden",
                         width: 140, height: 90,
                         background: "repeating-conic-gradient(rgba(255,255,255,0.08) 0% 25%, transparent 0% 50%) 0 0 / 16px 16px",
@@ -1101,20 +1142,27 @@ export default function ThumbCraft() {
             )}
 
             <div style={{ marginBottom: 14 }}>
-              <label style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", display: "block", marginBottom: 6 }}>Headline (optional)</label>
+              <label style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", display: "block", marginBottom: 6 }}>Headline</label>
               <input type="text" value={headlineText} onChange={(e) => setHeadlineText(e.target.value)}
-                placeholder="e.g. THIS CHANGES EVERYTHING" style={inputStyle} />
+                placeholder={concepts[selectedConcept]?.headline || "e.g. THIS CHANGES EVERYTHING"} style={inputStyle} />
             </div>
-            <button onClick={composeThumbnail} disabled={composing || !sourceImages.length}
+
+            <button onClick={craftThumbnail} disabled={composing || !sourceImages.length}
               style={btn(sourceImages.length > 0 && !composing, composing)}>
-              {composing ? "Composing..." : "Generate Thumbnail"}
+              {composing ? "Composing..." : "Craft Thumbnail →"}
             </button>
+
+            {!sourceImages.length && (
+              <div style={{ marginTop: 10, fontSize: 12, color: "rgba(255,255,255,0.3)" }}>
+                Upload at least one image to craft the thumbnail
+              </div>
+            )}
           </div>
         </div>
       )}
 
-      {/* ==================== STEP 2: COMPOSE ==================== */}
-      {step === 2 && (
+      {/* ==================== STEP 3: CRAFT ==================== */}
+      {step === 3 && (
         <div>
           <div style={{
             borderRadius: 14, overflow: "hidden",
@@ -1125,41 +1173,62 @@ export default function ThumbCraft() {
             <canvas ref={canvasRef} style={{ width: "100%", height: "auto", display: "block" }} />
           </div>
 
+          {critiqueResult && (
+            <div style={{
+              background: "rgba(114,9,183,0.07)", border: "1px solid rgba(114,9,183,0.18)",
+              borderRadius: 14, padding: 18, marginBottom: 20,
+            }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12 }}>
+                <div style={{
+                  fontSize: 32, fontWeight: 900, fontFamily: "'Space Mono', monospace",
+                  color: critiqueResult.score >= 8 ? "#4ade80" : critiqueResult.score >= 6 ? "#fbbf24" : "#f72585",
+                }}>{critiqueResult.score}/10</div>
+                <div>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: "#b5179e", fontFamily: "'Space Mono', monospace", letterSpacing: "0.1em" }}>
+                    {critiqueIteration === 0 ? "INITIAL CRITIQUE" : `CRITIQUE ITERATION ${critiqueIteration}`}
+                  </div>
+                  <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)" }}>
+                    {critiqueResult.score >= 8 ? "✓ Target score reached" : critiqueIteration >= 3 ? "Max iterations reached" : "Refining..."}
+                  </div>
+                </div>
+              </div>
+
+              <div style={{ display: "flex", gap: 16, marginBottom: 10, flexWrap: "wrap" }}>
+                <div style={{ flex: 1, minWidth: 200 }}>
+                  <div style={{ fontSize: 10, color: "#f72585", fontWeight: 700, marginBottom: 4, fontFamily: "'Space Mono', monospace" }}>ISSUES</div>
+                  <ul style={{ margin: 0, paddingLeft: 16, fontSize: 12, color: "rgba(255,255,255,0.5)", lineHeight: 1.7 }}>
+                    {critiqueResult.issues?.map((iss, i) => <li key={i}>{iss}</li>)}
+                  </ul>
+                </div>
+                <div style={{ flex: 1, minWidth: 200 }}>
+                  <div style={{ fontSize: 10, color: "#4ade80", fontWeight: 700, marginBottom: 4, fontFamily: "'Space Mono', monospace" }}>STRENGTHS</div>
+                  <ul style={{ margin: 0, paddingLeft: 16, fontSize: 12, color: "rgba(255,255,255,0.5)", lineHeight: 1.7 }}>
+                    {critiqueResult.strengths?.map((s, i) => <li key={i}>{s}</li>)}
+                  </ul>
+                </div>
+              </div>
+
+              <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", lineHeight: 1.6, fontStyle: "italic" }}>
+                "{critiqueResult.suggestions}"
+              </div>
+            </div>
+          )}
+
           <div style={{ marginBottom: 18 }}>
-            <label style={{ fontSize: 10, color: "rgba(255,255,255,0.35)", display: "block", marginBottom: 6, fontFamily: "'Space Mono', monospace", textTransform: "uppercase" }}>Edit Headline</label>
+            <label style={{ fontSize: 10, color: "rgba(255,255,255,0.35)", display: "block", marginBottom: 6, fontFamily: "'Space Mono', monospace", textTransform: "uppercase" }}>Headline</label>
             <input type="text" value={headlineText} onChange={(e) => setHeadlineText(e.target.value)}
               style={{ ...inputStyle, maxWidth: 500 }} />
           </div>
 
-          {composed?.layers && (
-            <div style={{
-              background: "rgba(255,255,255,0.02)", borderRadius: 10, padding: 14,
-              marginBottom: 18, fontSize: 11, color: "rgba(255,255,255,0.35)", lineHeight: 1.6,
-              fontFamily: "'Space Mono', monospace",
-            }}>
-              <strong style={{ color: "rgba(255,255,255,0.55)" }}>Layers:</strong>{" "}
-              {composed.layers.filter((l) => l.type !== "background").length} layer(s) composed
-            </div>
-          )}
-
-          {composed?.composition_notes && (
-            <div style={{
-              background: "rgba(255,255,255,0.02)", borderRadius: 10, padding: 14,
-              marginBottom: 18, fontSize: 12, color: "rgba(255,255,255,0.45)", lineHeight: 1.6,
-            }}>
-              <strong style={{ color: "rgba(255,255,255,0.65)" }}>Notes:</strong> {composed.composition_notes}
-            </div>
-          )}
-
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
             <button onClick={exportThumbnail} style={btn(true, false)}>Export PNG (1280×720)</button>
-            <button onClick={() => { setComposed(null); setCanvasReady(false); composeThumbnail(); }}
+            <button onClick={() => { setComposed(null); setCanvasReady(false); setCritiqueResult(null); setCritiqueIteration(0); setFinalScore(null); craftThumbnail(); }}
               style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", color: "#fff", borderRadius: 12, padding: "13px 22px", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "'Space Mono', monospace" }}>
               Regenerate
             </button>
-            <button onClick={() => setStep(1)}
+            <button onClick={() => setStep(2)}
               style={{ background: "transparent", border: "1px solid rgba(255,255,255,0.08)", color: "rgba(255,255,255,0.4)", borderRadius: 12, padding: "13px 22px", fontSize: 13, cursor: "pointer", fontFamily: "'Space Mono', monospace" }}>
-              ← Back
+              ← Back to Concepts
             </button>
           </div>
         </div>
@@ -1169,8 +1238,12 @@ export default function ThumbCraft() {
         marginTop: 48, paddingTop: 16, borderTop: "1px solid rgba(255,255,255,0.04)",
         fontSize: 10, color: "rgba(255,255,255,0.15)", fontFamily: "'Space Mono', monospace",
       }}>
-        Powered by OpenRouter · Transformers.js (RMBG-1.4) · 1280×720
+        Powered by OpenRouter · youtubetranscript.com · Transformers.js (RMBG-1.4) · 1280×720
       </div>
+
+      <style>{`
+        @keyframes spin { to { transform: rotate(360deg); } }
+      `}</style>
     </div>
   );
 }

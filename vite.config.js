@@ -8,47 +8,78 @@ export default defineConfig({
       name: "api-proxy",
       configureServer(server) {
         server.middlewares.use(async (req, res, next) => {
-          if (req.url !== "/api/proxy") return next();
-          if (req.method !== "POST") {
-            res.statusCode = 405;
-            res.setHeader("Content-Type", "application/json");
-            res.end(JSON.stringify({ error: "Method not allowed" }));
+          const url = new URL(req.url, "http://localhost");
+
+          if (url.pathname === "/api/proxy") {
+            if (req.method !== "POST") {
+              res.statusCode = 405;
+              res.setHeader("Content-Type", "application/json");
+              res.end(JSON.stringify({ error: "Method not allowed" }));
+              return;
+            }
+
+            const apiKey = process.env.OPENROUTER_API_KEY;
+            if (!apiKey) {
+              res.statusCode = 500;
+              res.setHeader("Content-Type", "application/json");
+              res.end(JSON.stringify({ error: "OPENROUTER_API_KEY not configured" }));
+              return;
+            }
+
+            let body = "";
+            for await (const chunk of req) body += chunk;
+
+            try {
+              const parsed = JSON.parse(body);
+              const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  Authorization: `Bearer ${apiKey}`,
+                  "HTTP-Referer": process.env.VERCEL_URL || "http://localhost:5173",
+                  "X-Title": "ThumbCraft",
+                },
+                body: JSON.stringify(parsed),
+              });
+
+              const data = await response.json();
+              res.statusCode = response.status;
+              res.setHeader("Content-Type", "application/json");
+              res.end(JSON.stringify(data));
+            } catch (error) {
+              res.statusCode = 500;
+              res.setHeader("Content-Type", "application/json");
+              res.end(JSON.stringify({ error: error.message }));
+            }
             return;
           }
 
-          const apiKey = process.env.OPENROUTER_API_KEY;
-          if (!apiKey) {
-            res.statusCode = 500;
-            res.setHeader("Content-Type", "application/json");
-            res.end(JSON.stringify({ error: "OPENROUTER_API_KEY not configured" }));
+          if (url.pathname === "/api/transcript") {
+            const videoId = url.searchParams.get("vid") || url.searchParams.get("videoId");
+            if (!videoId) {
+              res.statusCode = 400;
+              res.setHeader("Content-Type", "application/json");
+              res.end(JSON.stringify({ error: "Missing videoId" }));
+              return;
+            }
+
+            try {
+              const response = await fetch(
+                `https://youtubetranscript.com/?vid=${videoId}&format=json`,
+              );
+              const data = await response.json();
+              res.statusCode = response.status;
+              res.setHeader("Content-Type", "application/json");
+              res.end(JSON.stringify(data));
+            } catch (error) {
+              res.statusCode = 500;
+              res.setHeader("Content-Type", "application/json");
+              res.end(JSON.stringify({ error: error.message }));
+            }
             return;
           }
 
-          let body = "";
-          for await (const chunk of req) body += chunk;
-
-          try {
-            const parsed = JSON.parse(body);
-            const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-                Authorization: `Bearer ${apiKey}`,
-                "HTTP-Referer": process.env.VERCEL_URL || "http://localhost:5173",
-                "X-Title": "ThumbCraft",
-              },
-              body: JSON.stringify(parsed),
-            });
-
-            const data = await response.json();
-            res.statusCode = response.status;
-            res.setHeader("Content-Type", "application/json");
-            res.end(JSON.stringify(data));
-          } catch (error) {
-            res.statusCode = 500;
-            res.setHeader("Content-Type", "application/json");
-            res.end(JSON.stringify({ error: error.message }));
-          }
+          next();
         });
       },
     },

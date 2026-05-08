@@ -3,6 +3,15 @@ import react from "@vitejs/plugin-react";
 
 export default defineConfig({
   plugins: [react()],
+  resolve: {
+    alias: {
+      sharp$: false,
+      "onnxruntime-node$": false,
+    },
+  },
+  optimizeDeps: {
+    exclude: ["@huggingface/transformers"],
+  },
   server: {
     proxy: {
       "/api": "http://localhost:3001",

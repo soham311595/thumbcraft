@@ -1,4 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from "react";
+import { loadBgRemovalModel, removeBackground, isModelLoaded } from "./backgroundRemoval";
 
 const STEPS = ["references", "analyze", "compose", "export"];
 const STEP_LABELS = ["Reference Thumbnails", "Style Analysis", "Compose", "Export"];
@@ -25,6 +26,22 @@ const resizeImage = (base64, maxDim = 512) =>
       res(c.toDataURL("image/jpeg", 0.8).split(",")[1]);
     };
     img.src = `data:image/jpeg;base64,${base64}`;
+  });
+
+const resizeToPng = (dataUrl, maxDim = 800) =>
+  new Promise((res) => {
+    const img = new Image();
+    img.onload = () => {
+      const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
+      const w = Math.round(img.width * scale);
+      const h = Math.round(img.height * scale);
+      const c = document.createElement("canvas");
+      c.width = w;
+      c.height = h;
+      c.getContext("2d").drawImage(img, 0, 0, w, h);
+      res(c.toDataURL("image/png"));
+    };
+    img.src = dataUrl;
   });
 
 function extractVideoId(input) {
@@ -114,37 +131,65 @@ Your analysis must cover:
   "thumbnail_recipe": "A step-by-step recipe to recreate this style from scratch. Be VERY specific."
 }`;
 
-const COMPOSE_SYSTEM = `You are a world-class thumbnail designer. Given a style analysis JSON and 1-2 source images, generate SPECIFIC composition instructions for a YouTube thumbnail (1280x720).
+const COMPOSE_SYSTEM = `You are a world-class YouTube thumbnail designer. Given a style analysis JSON and extracted subject images (foreground cutouts with transparent backgrounds), compose a multi-layer 1280x720 thumbnail.
 
-Return ONLY valid JSON:
+The subject images have their backgrounds already removed. They are labeled as "extracted_subject_0", "extracted_subject_1" etc.
+
+Return ONLY valid JSON with this structure:
 {
-  "headline_text": "Suggested compelling headline (short, punchy)",
-  "subtext": "Optional smaller text",
-  "css_filter_main": "CSS filter string for main/background image",
-  "css_filter_subject": "CSS filter string for subject image",
-  "background_css": "CSS background shorthand",
-  "text_color": "#hex",
-  "text_stroke_color": "#hex",
-  "text_stroke_width": 3,
-  "text_shadow": "CSS text-shadow value",
-  "text_font_size": 72,
-  "subtext_color": "#hex",
-  "accent_color": "#hex",
-  "vignette_strength": 0.6,
-  "grain_opacity": 0.05,
-  "border_glow": true,
-  "border_glow_color": "#hex",
-  "composition_notes": "Brief notes on image positioning"
+  "headline_text": "Short punchy headline (3-4 words max)",
+  "subtext": "Optional smaller supporting text",
+  "layers": [
+    {
+      "type": "background",
+      "gradient": { "angle": 135, "colors": ["#hex1", "#hex2", "#hex3"] }
+    },
+    {
+      "type": "subject",
+      "index": 0,
+      "x": 60,
+      "y": 100,
+      "scale": 1.0,
+      "rotation": 0,
+      "z_index": 1,
+      "blend_mode": "normal",
+      "opacity": 1.0,
+      "filter": "contrast(1.1) saturate(1.2)"
+    },
+    {
+      "type": "text",
+      "text": "headline",
+      "font": "Bebas Neue",
+      "font_size": 72,
+      "color": "#ffffff",
+      "stroke_color": "#000000",
+      "stroke_width": 4,
+      "shadow": "2px 2px 10px rgba(0,0,0,0.8)",
+      "position": { "x": 60, "y": 280 },
+      "max_width": 920,
+      "text_align": "left",
+      "z_index": 5
+    }
+  ],
+  "effects": {
+    "vignette_strength": 0.6,
+    "grain_opacity": 0.05,
+    "border_glow": true,
+    "border_glow_color": "#f72585"
+  }
 }`;
 
-function ImageCard({ src, onRemove, label, small, videoId }) {
+function ImageCard({ src, onRemove, label, small, videoId, transparent }) {
   return (
     <div style={{
       position: "relative", borderRadius: 10, overflow: "hidden",
-      background: "#1a1a2e", border: "1px solid rgba(255,255,255,0.08)",
+      background: transparent
+        ? "repeating-conic-gradient(rgba(255,255,255,0.08) 0% 25%, transparent 0% 50%) 0 0 / 16px 16px"
+        : "#1a1a2e",
+      border: "1px solid rgba(255,255,255,0.08)",
       width: small ? 152 : 180, height: small ? 85 : 101, flexShrink: 0,
     }}>
-      <img src={src} alt={label} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+      <img src={src} alt={label} style={{ width: "100%", height: "100%", objectFit: "contain" }} />
       {onRemove && (
         <button onClick={(e) => { e.stopPropagation(); onRemove(); }} style={{
           position: "absolute", top: 4, right: 4,
@@ -245,6 +290,324 @@ function ColorSwatch({ colors, label }) {
   );
 }
 
+function loadImage(src) {
+  return new Promise((res) => {
+    const img = new Image();
+    img.onload = () => res(img);
+    img.onerror = () => res(null);
+    img.src = src;
+  });
+}
+
+async function renderLayers(ctx, composed, extracted, sourceImgs, analysis, headline) {
+  const layers = [...(composed.layers || [])].sort((a, b) => a.z_index - b.z_index);
+
+  if (!layers.length) {
+    await renderLegacy(ctx, composed, sourceImgs, analysis, headline);
+    return;
+  }
+
+  const cache = {};
+
+  for (const layer of layers) {
+    ctx.save();
+
+    switch (layer.type) {
+      case "background": {
+        const bgColors = analysis?.color_palette?.dominant || ["#1a1a2e", "#16213e"];
+        const colors = layer.gradient?.colors || bgColors;
+        const angle = layer.gradient?.angle || 135;
+        const rad = (angle * Math.PI) / 180;
+        const len = Math.sqrt(1280 * 1280 + 720 * 720) / 2;
+        const cx = 640, cy = 360;
+        const x1 = cx - Math.cos(rad) * len;
+        const y1 = cy - Math.sin(rad) * len;
+        const x2 = cx + Math.cos(rad) * len;
+        const y2 = cy + Math.sin(rad) * len;
+        const grad = ctx.createLinearGradient(x1, y1, x2, y2);
+        colors.forEach((c, i) => grad.addColorStop(i / Math.max(colors.length - 1, 1), c));
+        ctx.fillStyle = grad;
+        ctx.fillRect(0, 0, 1280, 720);
+        break;
+      }
+
+      case "subject": {
+        const srcData = extracted[layer.index]?.dataUrl || sourceImgs[layer.index]?.preview;
+        if (!srcData) break;
+        if (!cache[srcData]) cache[srcData] = await loadImage(srcData);
+        const img = cache[srcData];
+        if (!img) break;
+
+        if (layer.filter) ctx.filter = layer.filter;
+        if (layer.opacity !== undefined) ctx.globalAlpha = layer.opacity;
+        if (layer.blend_mode && layer.blend_mode !== "normal") {
+          ctx.globalCompositeOperation = layer.blend_mode;
+        }
+
+        const scale = layer.scale || 1;
+        const w = Math.round(img.width * scale);
+        const h = Math.round(img.height * scale);
+
+        let x, y;
+        if (layer.x === "center") x = (1280 - w) / 2;
+        else if (typeof layer.x === "number") x = layer.x;
+        else x = 0;
+        if (layer.y === "center") y = (720 - h) / 2;
+        else if (typeof layer.y === "number") y = layer.y;
+        else y = 0;
+
+        if (layer.rotation) {
+          ctx.translate(x + w / 2, y + h / 2);
+          ctx.rotate((layer.rotation * Math.PI) / 180);
+          ctx.translate(-(x + w / 2), -(y + h / 2));
+        }
+
+        ctx.drawImage(img, x, y, w, h);
+        break;
+      }
+
+      case "text": {
+        const text = layer.text === "headline"
+          ? headline || composed.headline_text || ""
+          : layer.text || "";
+        if (!text) break;
+
+        const fonts = analysis?.typography?.recommended_fonts || ["Impact"];
+        const fontSize = layer.font_size || 68;
+        const fontFamily = layer.font || fonts[0];
+        const maxW = layer.max_width || 920;
+        const align = layer.text_align || "left";
+
+        ctx.font = `900 ${fontSize}px "${fontFamily}", Impact, sans-serif`;
+        ctx.textBaseline = "top";
+        ctx.textAlign = align;
+
+        const words = text.toUpperCase().split(" ");
+        const lines = [];
+        let line = "";
+        for (const w of words) {
+          const test = line ? line + " " + w : w;
+          if (ctx.measureText(test).width > maxW && line) {
+            lines.push(line);
+            line = w;
+          } else {
+            line = test;
+          }
+        }
+        if (line) lines.push(line);
+
+        const lh = fontSize * 1.12;
+        let startX = typeof layer.position?.x === "number" ? layer.position.x : 60;
+        let startY = typeof layer.position?.y === "number"
+          ? layer.position.y
+          : (720 - lines.length * lh) / 2;
+
+        if (align === "center") startX = 640;
+        else if (align === "right") startX = 1220;
+
+        ctx.save();
+
+        if (layer.shadow) {
+          const parts = layer.shadow.match(/([-\d.]+)px/g);
+          if (parts?.length >= 3) {
+            ctx.shadowOffsetX = parseFloat(parts[0]);
+            ctx.shadowOffsetY = parseFloat(parts[1]);
+            ctx.shadowBlur = parseFloat(parts[2]);
+            const sc = layer.shadow.match(/(#[0-9a-fA-F]+|rgba?\([^)]+\))/);
+            ctx.shadowColor = sc ? sc[0] : "rgba(0,0,0,0.8)";
+          }
+        }
+
+        lines.forEach((ln, li) => {
+          const y = startY + li * lh;
+          if (layer.stroke_width) {
+            ctx.strokeStyle = layer.stroke_color || "#000";
+            ctx.lineWidth = layer.stroke_width;
+            ctx.lineJoin = "round";
+            ctx.strokeText(ln, startX, y);
+          }
+          ctx.fillStyle = layer.color || "#fff";
+          ctx.fillText(ln, startX, y);
+        });
+
+        ctx.restore();
+        break;
+      }
+    }
+
+    ctx.restore();
+  }
+
+  const eff = composed.effects || {};
+  if (eff.vignette_strength) {
+    const vg = ctx.createRadialGradient(640, 360, 200, 640, 360, 900);
+    vg.addColorStop(0, "rgba(0,0,0,0)");
+    vg.addColorStop(1, `rgba(0,0,0,${eff.vignette_strength})`);
+    ctx.fillStyle = vg;
+    ctx.fillRect(0, 0, 1280, 720);
+  }
+
+  const tg = ctx.createLinearGradient(0, 0, 700, 0);
+  tg.addColorStop(0, "rgba(0,0,0,0.55)");
+  tg.addColorStop(1, "rgba(0,0,0,0)");
+  ctx.fillStyle = tg;
+  ctx.fillRect(0, 0, 1280, 720);
+
+  if ((eff.grain_opacity || 0) > 0) {
+    const gc = document.createElement("canvas");
+    gc.width = 1280;
+    gc.height = 720;
+    const gctx = gc.getContext("2d");
+    const id = gctx.createImageData(1280, 720);
+    for (let p = 0; p < id.data.length; p += 4) {
+      const v = Math.random() * 255;
+      id.data[p] = id.data[p + 1] = id.data[p + 2] = v;
+      id.data[p + 3] = 255;
+    }
+    gctx.putImageData(id, 0, 0);
+    ctx.save();
+    ctx.globalAlpha = eff.grain_opacity;
+    ctx.globalCompositeOperation = "overlay";
+    ctx.drawImage(gc, 0, 0);
+    ctx.restore();
+  }
+
+  if (eff.border_glow) {
+    ctx.save();
+    const bc = eff.border_glow_color || "#f72585";
+    ctx.shadowColor = bc;
+    ctx.shadowBlur = 50;
+    ctx.strokeStyle = bc;
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.roundRect(20, 20, 1240, 680, 16);
+    ctx.stroke();
+    ctx.restore();
+  }
+}
+
+async function renderLegacy(ctx, composed, sourceImgs, analysis, headline) {
+  const bgColors = analysis?.color_palette?.dominant || ["#1a1a2e", "#16213e"];
+  const accent = composed.accent_color || "#f72585";
+
+  const grad = ctx.createLinearGradient(0, 0, 1280, 720);
+  bgColors.forEach((c, i) => grad.addColorStop(i / Math.max(bgColors.length - 1, 1), c));
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, 1280, 720);
+
+  for (let i = 0; i < sourceImgs.length; i++) {
+    const img = await loadImage(sourceImgs[i].preview);
+    if (!img) continue;
+    ctx.save();
+    ctx.filter = i === 0
+      ? (composed.css_filter_main || "contrast(1.1) saturate(1.2)")
+      : (composed.css_filter_subject || "contrast(1.15) saturate(1.3)");
+    if (sourceImgs.length === 1) {
+      const s = Math.max(1280 / img.width, 720 / img.height);
+      ctx.drawImage(img, (1280 - img.width * s) / 2, (720 - img.height * s) / 2, img.width * s, img.height * s);
+    } else if (i === 0) {
+      const s = Math.max(1280 / img.width, 720 / img.height);
+      ctx.globalAlpha = 0.55;
+      ctx.drawImage(img, (1280 - img.width * s) / 2, (720 - img.height * s) / 2, img.width * s, img.height * s);
+      ctx.globalAlpha = 1;
+    } else {
+      const s = Math.min(660 / img.height, 720 / img.width);
+      ctx.drawImage(img, 1280 - img.width * s - 30, 720 - img.height * s, img.width * s, img.height * s);
+    }
+    ctx.restore();
+  }
+
+  const vg = ctx.createRadialGradient(640, 360, 200, 640, 360, 900);
+  vg.addColorStop(0, "rgba(0,0,0,0)");
+  vg.addColorStop(1, `rgba(0,0,0,${composed.vignette_strength || 0.6})`);
+  ctx.fillStyle = vg;
+  ctx.fillRect(0, 0, 1280, 720);
+
+  const tg = ctx.createLinearGradient(0, 0, 700, 0);
+  tg.addColorStop(0, "rgba(0,0,0,0.65)");
+  tg.addColorStop(1, "rgba(0,0,0,0)");
+  ctx.fillStyle = tg;
+  ctx.fillRect(0, 0, 1280, 720);
+
+  if ((composed.grain_opacity || 0) > 0) {
+    const gc = document.createElement("canvas");
+    gc.width = 1280; gc.height = 720;
+    const gctx = gc.getContext("2d");
+    const id = gctx.createImageData(1280, 720);
+    for (let p = 0; p < id.data.length; p += 4) {
+      const v = Math.random() * 255;
+      id.data[p] = id.data[p + 1] = id.data[p + 2] = v;
+      id.data[p + 3] = 255;
+    }
+    gctx.putImageData(id, 0, 0);
+    ctx.save();
+    ctx.globalAlpha = composed.grain_opacity;
+    ctx.globalCompositeOperation = "overlay";
+    ctx.drawImage(gc, 0, 0);
+    ctx.restore();
+  }
+
+  if (composed.border_glow) {
+    ctx.save();
+    const bc = composed.border_glow_color || accent;
+    ctx.shadowColor = bc; ctx.shadowBlur = 50;
+    ctx.strokeStyle = bc; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.roundRect(20, 20, 1240, 680, 16); ctx.stroke();
+    ctx.restore();
+  }
+
+  const fonts = analysis?.typography?.recommended_fonts || ["Impact"];
+  const fontSize = composed.text_font_size || 68;
+  const displayText = headline || composed?.headline_text || "YOUR HEADLINE";
+  const maxW = sourceImgs.length > 1 ? 600 : 920;
+
+  ctx.font = `900 ${fontSize}px ${fonts[0]}, Impact, sans-serif`;
+  ctx.textBaseline = "top";
+  const words = displayText.toUpperCase().split(" ");
+  const lines = [];
+  let line = "";
+  for (const w of words) {
+    const test = line ? line + " " + w : w;
+    if (ctx.measureText(test).width > maxW && line) { lines.push(line); line = w; } else { line = test; }
+  }
+  if (line) lines.push(line);
+
+  const lh = fontSize * 1.12;
+  const totalH = lines.length * lh;
+  const startY = (720 - totalH) / 2;
+
+  ctx.save();
+  if (composed.text_shadow) {
+    const parts = composed.text_shadow.match(/([-\d.]+)px/g);
+    if (parts?.length >= 3) {
+      ctx.shadowOffsetX = parseFloat(parts[0]);
+      ctx.shadowOffsetY = parseFloat(parts[1]);
+      ctx.shadowBlur = parseFloat(parts[2]);
+      ctx.shadowColor = composed.text_shadow.match(/(#[0-9a-fA-F]+|rgba?\([^)]+\))/)?.[0] || "rgba(0,0,0,0.8)";
+    }
+  }
+
+  lines.forEach((ln, li) => {
+    const y = startY + li * lh;
+    if (composed.text_stroke_width) {
+      ctx.strokeStyle = composed.text_stroke_color || accent;
+      ctx.lineWidth = composed.text_stroke_width;
+      ctx.lineJoin = "round";
+      ctx.strokeText(ln, 60, y);
+    }
+    ctx.fillStyle = composed.text_color || "#ffffff";
+    ctx.fillText(ln, 60, y);
+  });
+
+  if (composed?.subtext) {
+    ctx.shadowColor = "transparent";
+    ctx.font = `700 ${Math.round(fontSize * 0.35)}px ${fonts[1] || fonts[0]}, sans-serif`;
+    ctx.fillStyle = composed.subtext_color || accent;
+    ctx.fillText(composed.subtext.toUpperCase(), 60, startY + totalH + 16);
+  }
+  ctx.restore();
+}
+
 export default function ThumbCraft() {
   const [step, setStep] = useState(0);
   const [refs, setRefs] = useState([]);
@@ -261,6 +624,11 @@ export default function ThumbCraft() {
   const [ytInput, setYtInput] = useState("");
   const [ytLoading, setYtLoading] = useState(false);
   const [ytStatus, setYtStatus] = useState("");
+
+  const [extractedSubjects, setExtractedSubjects] = useState([]);
+  const [extracting, setExtracting] = useState(false);
+  const [modelStatus, setModelStatus] = useState("");
+  const [selectedSubjects, setSelectedSubjects] = useState(new Set());
 
   const processYoutubeUrls = async () => {
     const lines = ytInput.split(/[\n,]+/).map((l) => l.trim()).filter(Boolean);
@@ -347,24 +715,75 @@ export default function ThumbCraft() {
     finally { setAnalyzing(false); setAnalyzeProgress(""); }
   };
 
+  const startExtraction = async () => {
+    setExtracting(true); setError(""); setModelStatus("Loading AI model...");
+    try {
+      await loadBgRemovalModel((p) => {
+        if (p.status === "download") {
+          setModelStatus(`Downloading model (176MB) ... ${p.progress ? Math.round(p.progress * 100) + "%" : ""}`);
+        } else if (p.status === "progress") {
+          setModelStatus("Processing...");
+        }
+      });
+      setModelStatus("Removing backgrounds...");
+      const results = [];
+      for (let i = 0; i < sourceImages.length; i++) {
+        setModelStatus(`Extracting subject ${i + 1}/${sourceImages.length}...`);
+        const small = await resizeToPng(sourceImages[i].preview, 800);
+        const result = await removeBackground(small);
+        results.push({ dataUrl: result, sourceIndex: i });
+      }
+      setExtractedSubjects(results);
+      setSelectedSubjects(new Set(results.map((_, i) => i)));
+      setModelStatus(`Extracted ${results.length} subject${results.length > 1 ? "s" : ""}`);
+      setTimeout(() => setModelStatus(""), 3000);
+    } catch (e) {
+      setError(`Extraction failed: ${e.message}`);
+      console.error(e);
+    }
+    setExtracting(false);
+  };
+
+  const toggleSubject = (idx) => {
+    const next = new Set(selectedSubjects);
+    if (next.has(idx)) next.delete(idx); else next.add(idx);
+    setSelectedSubjects(next);
+  };
+
   const composeThumbnail = async () => {
     if (!sourceImages.length) { setError("Add at least 1 source image."); return; }
     setComposing(true); setError("");
     try {
       const content = [];
-      for (const s of sourceImages) {
-        const small = await resizeImage(s.base64, 800);
-        content.push({ type: "image_url", image_url: { url: `data:image/jpeg;base64,${small}` } });
+
+      const subjectsToSend = extractedSubjects.length > 0
+        ? [...selectedSubjects].map((i) => extractedSubjects[i])
+        : [];
+
+      if (subjectsToSend.length > 0) {
+        for (const s of subjectsToSend) {
+          const resized = await resizeToPng(s.dataUrl, 512);
+          content.push({
+            type: "image_url",
+            image_url: { url: resized },
+          });
+        }
+      } else {
+        for (const s of sourceImages) {
+          const small = await resizeImage(s.base64, 800);
+          content.push({ type: "image_url", image_url: { url: `data:image/jpeg;base64,${small}` } });
+        }
       }
+
       content.push({
         type: "text",
-        text: `${sourceImages.length} source image(s). Style:\n${JSON.stringify(analysis, null, 2)}\nHeadline: "${headlineText || '(suggest one)'}"\nReturn ONLY JSON.`,
+        text: `${subjectsToSend.length > 0 ? subjectsToSend.length + " extracted subject(s)." : sourceImages.length + " source image(s)."}\nStyle:\n${JSON.stringify(analysis, null, 2)}\nHeadline: "${headlineText || "(suggest one)"}"\nReturn ONLY JSON.`,
       });
       const resp = await fetch("/api/proxy", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          model: "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free", max_tokens: 3000,
+          model: "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free", max_tokens: 4000,
           messages: [
             { role: "system", content: COMPOSE_SYSTEM },
             { role: "user", content },
@@ -390,131 +809,11 @@ export default function ThumbCraft() {
     const ctx = canvas.getContext("2d");
     canvas.width = 1280; canvas.height = 720;
 
-    const render = async () => {
-      const bgColors = analysis?.color_palette?.dominant || ["#1a1a2e", "#16213e"];
-      const accent = composed.accent_color || "#f72585";
-
-      const grad = ctx.createLinearGradient(0, 0, 1280, 720);
-      bgColors.forEach((c, i) => grad.addColorStop(i / Math.max(bgColors.length - 1, 1), c));
-      ctx.fillStyle = grad;
-      ctx.fillRect(0, 0, 1280, 720);
-
-      for (let i = 0; i < sourceImages.length; i++) {
-        await new Promise((res) => {
-          const img = new Image();
-          img.onload = () => {
-            ctx.save();
-            ctx.filter = i === 0 ? (composed.css_filter_main || "contrast(1.1) saturate(1.2)") : (composed.css_filter_subject || "contrast(1.15) saturate(1.3)");
-            if (sourceImages.length === 1) {
-              const scale = Math.max(1280 / img.width, 720 / img.height);
-              ctx.drawImage(img, (1280 - img.width * scale) / 2, (720 - img.height * scale) / 2, img.width * scale, img.height * scale);
-            } else if (i === 0) {
-              const scale = Math.max(1280 / img.width, 720 / img.height);
-              ctx.globalAlpha = 0.55;
-              ctx.drawImage(img, (1280 - img.width * scale) / 2, (720 - img.height * scale) / 2, img.width * scale, img.height * scale);
-              ctx.globalAlpha = 1;
-            } else {
-              const scale = Math.min(660 / img.height, 720 / img.width);
-              ctx.drawImage(img, 1280 - img.width * scale - 30, 720 - img.height * scale, img.width * scale, img.height * scale);
-            }
-            ctx.restore();
-            res();
-          };
-          img.src = sourceImages[i].preview;
-        });
-      }
-
-      const vigGrad = ctx.createRadialGradient(640, 360, 200, 640, 360, 900);
-      vigGrad.addColorStop(0, "rgba(0,0,0,0)");
-      vigGrad.addColorStop(1, `rgba(0,0,0,${composed.vignette_strength || 0.6})`);
-      ctx.fillStyle = vigGrad;
-      ctx.fillRect(0, 0, 1280, 720);
-
-      const tGrad = ctx.createLinearGradient(0, 0, 700, 0);
-      tGrad.addColorStop(0, "rgba(0,0,0,0.65)");
-      tGrad.addColorStop(1, "rgba(0,0,0,0)");
-      ctx.fillStyle = tGrad;
-      ctx.fillRect(0, 0, 1280, 720);
-
-      if ((composed.grain_opacity || 0) > 0) {
-        const gc = document.createElement("canvas");
-        gc.width = 1280; gc.height = 720;
-        const g = gc.getContext("2d");
-        const id = g.createImageData(1280, 720);
-        for (let p = 0; p < id.data.length; p += 4) {
-          const v = Math.random() * 255;
-          id.data[p] = id.data[p+1] = id.data[p+2] = v; id.data[p+3] = 255;
-        }
-        g.putImageData(id, 0, 0);
-        ctx.save();
-        ctx.globalAlpha = composed.grain_opacity;
-        ctx.globalCompositeOperation = "overlay";
-        ctx.drawImage(gc, 0, 0);
-        ctx.restore();
-      }
-
-      if (composed.border_glow) {
-        ctx.save();
-        const gc = composed.border_glow_color || accent;
-        ctx.shadowColor = gc; ctx.shadowBlur = 50;
-        ctx.strokeStyle = gc; ctx.lineWidth = 3;
-        ctx.beginPath(); ctx.roundRect(20, 20, 1240, 680, 16); ctx.stroke();
-        ctx.restore();
-      }
-
-      const fonts = analysis?.typography?.recommended_fonts || ["Impact"];
-      const fontSize = composed.text_font_size || 68;
-      const displayText = headlineText || composed?.headline_text || "YOUR HEADLINE";
-      const maxW = sourceImages.length > 1 ? 600 : 920;
-
-      ctx.font = `900 ${fontSize}px ${fonts[0]}, Impact, sans-serif`;
-      ctx.textBaseline = "top";
-      const words = displayText.toUpperCase().split(" ");
-      const lines = []; let line = "";
-      for (const w of words) {
-        const test = line ? line + " " + w : w;
-        if (ctx.measureText(test).width > maxW && line) { lines.push(line); line = w; } else { line = test; }
-      }
-      if (line) lines.push(line);
-
-      const lh = fontSize * 1.12;
-      const totalH = lines.length * lh;
-      const startY = (720 - totalH) / 2;
-
-      ctx.save();
-      if (composed.text_shadow) {
-        const parts = composed.text_shadow.match(/([-\d.]+)px/g);
-        if (parts?.length >= 3) {
-          ctx.shadowOffsetX = parseFloat(parts[0]);
-          ctx.shadowOffsetY = parseFloat(parts[1]);
-          ctx.shadowBlur = parseFloat(parts[2]);
-          ctx.shadowColor = composed.text_shadow.match(/(#[0-9a-fA-F]+|rgba?\([^)]+\))/)?.[0] || "rgba(0,0,0,0.8)";
-        }
-      }
-
-      lines.forEach((ln, li) => {
-        const y = startY + li * lh;
-        if (composed.text_stroke_width) {
-          ctx.strokeStyle = composed.text_stroke_color || accent;
-          ctx.lineWidth = composed.text_stroke_width;
-          ctx.lineJoin = "round";
-          ctx.strokeText(ln, 60, y);
-        }
-        ctx.fillStyle = composed.text_color || "#ffffff";
-        ctx.fillText(ln, 60, y);
-      });
-
-      if (composed?.subtext) {
-        ctx.shadowColor = "transparent";
-        ctx.font = `700 ${Math.round(fontSize * 0.35)}px ${fonts[1] || fonts[0]}, sans-serif`;
-        ctx.fillStyle = composed.subtext_color || accent;
-        ctx.fillText(composed.subtext.toUpperCase(), 60, startY + totalH + 16);
-      }
-      ctx.restore();
+    (async () => {
+      await renderLayers(ctx, composed, extractedSubjects, sourceImages, analysis, headlineText);
       setCanvasReady(true);
-    };
-    render();
-  }, [step, composed, analysis, sourceImages, headlineText]);
+    })();
+  }, [step, composed, analysis, sourceImages, extractedSubjects, headlineText]);
 
   const exportThumbnail = () => {
     if (!canvasRef.current) return;
@@ -580,7 +879,6 @@ export default function ThumbCraft() {
             Add <strong style={{ color: "#fff" }}>10–15 YouTube thumbnails</strong> as style references. Paste video links or upload screenshots.
           </p>
 
-          {/* YouTube URL Input */}
           <div style={{
             background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.08)",
             borderRadius: 14, padding: 20, marginBottom: 16,
@@ -619,7 +917,6 @@ export default function ThumbCraft() {
             </div>
           </div>
 
-          {/* Divider */}
           <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 16 }}>
             <div style={{ flex: 1, height: 1, background: "rgba(255,255,255,0.06)" }} />
             <span style={{ fontSize: 11, color: "rgba(255,255,255,0.2)", fontFamily: "'Space Mono', monospace" }}>OR UPLOAD IMAGES</span>
@@ -672,7 +969,7 @@ export default function ThumbCraft() {
         </div>
       )}
 
-      {/* ==================== STEP 1: ANALYSIS ==================== */}
+      {/* ==================== STEP 1: ANALYSIS + SOURCE IMAGES + EXTRACT ==================== */}
       {step === 1 && analysis && (
         <div>
           <div style={{
@@ -737,25 +1034,72 @@ export default function ThumbCraft() {
             <p style={{ fontSize: 12, lineHeight: 1.8, color: "rgba(255,255,255,0.55)", margin: 0, whiteSpace: "pre-wrap" }}>{analysis.thumbnail_recipe}</p>
           </div>
 
-          {/* Source Images */}
+          {/* Source Images + Extraction */}
           <div style={{
             background: "rgba(247,37,133,0.03)", border: "1px solid rgba(247,37,133,0.12)",
             borderRadius: 14, padding: 20,
           }}>
-            <div style={{ fontSize: 14, fontWeight: 700, color: "#fff", marginBottom: 14 }}>Add your source images (1–2)</div>
+            <div style={{ fontSize: 14, fontWeight: 700, color: "#fff", marginBottom: 14 }}>Add source images (1–2)</div>
             <DropZone onFiles={addSources} multiple accept="image/*" style={{ marginBottom: 14 }}>
               <div style={{ fontSize: 22, marginBottom: 4 }}>📸</div>
               <div style={{ fontSize: 13, fontWeight: 600, color: "rgba(255,255,255,0.6)" }}>Drop your images here</div>
-              <div style={{ fontSize: 11, color: "rgba(255,255,255,0.25)", marginTop: 4 }}>{sourceImages.length}/2 · 1 background + 1 subject works best</div>
+              <div style={{ fontSize: 11, color: "rgba(255,255,255,0.25)", marginTop: 4 }}>{sourceImages.length}/2</div>
             </DropZone>
             {sourceImages.length > 0 && (
               <div style={{ display: "flex", gap: 10, marginBottom: 14 }}>
                 {sourceImages.map((s, i) => (
-                  <ImageCard key={i} src={s.preview} label={i === 0 ? "Main / Background" : "Subject"}
+                  <ImageCard key={i} src={s.preview} label={`Source ${i + 1}`}
                     onRemove={() => setSourceImages((p) => p.filter((_, j) => j !== i))} />
                 ))}
               </div>
             )}
+
+            {/* Extract Subjects */}
+            {sourceImages.length > 0 && (
+              <div style={{ marginBottom: 14 }}>
+                <button onClick={startExtraction} disabled={extracting}
+                  style={{
+                    ...btn(!extracting, extracting), fontSize: 12, padding: "10px 20px",
+                    background: isModelLoaded() && !extracting
+                      ? "linear-gradient(135deg, #7209b7, #3a0ca3)"
+                      : btn(!extracting, extracting).background,
+                  }}>
+                  {extracting ? modelStatus : extractedSubjects.length > 0
+                    ? "Re-extract Subjects"
+                    : "Extract Subjects (AI Background Removal)"}
+                </button>
+                {modelStatus && !extracting && (
+                  <span style={{ marginLeft: 10, fontSize: 11, color: "rgba(255,255,255,0.4)" }}>{modelStatus}</span>
+                )}
+              </div>
+            )}
+
+            {/* Extracted Subjects Preview */}
+            {extractedSubjects.length > 0 && (
+              <div style={{ marginBottom: 14 }}>
+                <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginBottom: 8, fontFamily: "'Space Mono', monospace" }}>
+                  EXTRACTED SUBJECTS — click to toggle
+                </div>
+                <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                  {extractedSubjects.map((s, i) => {
+                    const selected = selectedSubjects.has(i);
+                    return (
+                      <div key={i} onClick={() => toggleSubject(i)} style={{
+                        cursor: "pointer", opacity: selected ? 1 : 0.35,
+                        transition: "all 0.2s",
+                        border: selected ? "2px solid #f72585" : "2px solid transparent",
+                        borderRadius: 10, overflow: "hidden",
+                        width: 140, height: 90,
+                        background: "repeating-conic-gradient(rgba(255,255,255,0.08) 0% 25%, transparent 0% 50%) 0 0 / 16px 16px",
+                      }}>
+                        <img src={s.dataUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "contain" }} />
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
             <div style={{ marginBottom: 14 }}>
               <label style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", display: "block", marginBottom: 6 }}>Headline (optional)</label>
               <input type="text" value={headlineText} onChange={(e) => setHeadlineText(e.target.value)}
@@ -787,6 +1131,17 @@ export default function ThumbCraft() {
               style={{ ...inputStyle, maxWidth: 500 }} />
           </div>
 
+          {composed?.layers && (
+            <div style={{
+              background: "rgba(255,255,255,0.02)", borderRadius: 10, padding: 14,
+              marginBottom: 18, fontSize: 11, color: "rgba(255,255,255,0.35)", lineHeight: 1.6,
+              fontFamily: "'Space Mono', monospace",
+            }}>
+              <strong style={{ color: "rgba(255,255,255,0.55)" }}>Layers:</strong>{" "}
+              {composed.layers.filter((l) => l.type !== "background").length} layer(s) composed
+            </div>
+          )}
+
           {composed?.composition_notes && (
             <div style={{
               background: "rgba(255,255,255,0.02)", borderRadius: 10, padding: 14,
@@ -814,7 +1169,7 @@ export default function ThumbCraft() {
         marginTop: 48, paddingTop: 16, borderTop: "1px solid rgba(255,255,255,0.04)",
         fontSize: 10, color: "rgba(255,255,255,0.15)", fontFamily: "'Space Mono', monospace",
       }}>
-        Powered by OpenRouter · YouTube thumbnail extraction + style analysis + canvas compositing · 1280×720
+        Powered by OpenRouter · Transformers.js (RMBG-1.4) · 1280×720
       </div>
     </div>
   );

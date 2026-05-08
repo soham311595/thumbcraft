@@ -610,6 +610,7 @@ export default function ThumbCraft() {
   const [transcriptText, setTranscriptText] = useState("");
   const [videoThumbnail, setVideoThumbnail] = useState(null);
   const [refs, setRefs] = useState([]);
+  const [ytInput, setYtInput] = useState("");
   const [ytLoading, setYtLoading] = useState(false);
   const [ytStatus, setYtStatus] = useState("");
 
@@ -652,6 +653,31 @@ export default function ThumbCraft() {
     }
     setRefs((prev) => [...prev, ...newRefs]);
   }, [refs]);
+
+  const processYoutubeUrls = async () => {
+    const lines = ytInput.split(/[\n,]+/).map((l) => l.trim()).filter(Boolean);
+    if (!lines.length) return;
+    setYtLoading(true); setError("");
+    let added = 0, failed = 0;
+    const newRefs = [];
+    for (const line of lines) {
+      if (refs.length + newRefs.length >= 15) { setYtStatus("Reached 15 limit"); break; }
+      const vid = extractVideoId(line);
+      if (!vid) { failed++; continue; }
+      setYtStatus(`Fetching ${added + failed + 1}/${lines.length}...`);
+      try {
+        const result = await fetchYtThumbnail(vid);
+        const small = await resizeImage(result.base64, 512);
+        newRefs.push({ base64: small, preview: result.preview, videoId: result.videoId, source: "youtube" });
+        added++;
+      } catch { failed++; }
+    }
+    setRefs((prev) => [...prev, ...newRefs]);
+    setYtInput("");
+    setYtStatus(`Added ${added} thumbnail${added !== 1 ? "s" : ""}${failed ? `, ${failed} failed` : ""}`);
+    setYtLoading(false);
+    setTimeout(() => setYtStatus(""), 4000);
+  };
 
   const analyzeVideo = async () => {
     if (!videoId) { setError("Enter a valid YouTube URL"); return; }
@@ -698,15 +724,21 @@ export default function ThumbCraft() {
   const generateConcepts = async () => {
     setGeneratingConcepts(true); setError(""); setStatus("Generating concepts...");
     try {
-      let conceptPrompt = `Video Analysis:\n${JSON.stringify(videoAnalysis, null, 2)}\n\nTranscript:\n${transcriptText.slice(0, 4000)}`;
+      const content = [];
+      let textPrompt = `Video Analysis:\n${JSON.stringify(videoAnalysis, null, 2)}\n\nTranscript:\n${transcriptText.slice(0, 4000)}`;
 
       if (refs.length > 0) {
-        conceptPrompt += `\n\nReference style analysis not available, but ${refs.length} reference thumbnails were provided. Consider their style in your concepts.`;
+        textPrompt += `\n\nReference thumbnails are provided as images above. Analyze their visual style and incorporate elements of their style into the concepts.`;
+        for (const r of refs) {
+          content.push({ type: "image_url", image_url: { url: `data:image/jpeg;base64,${r.base64}` } });
+        }
       }
+
+      content.push({ type: "text", text: textPrompt });
 
       const result = await callAI([
         { role: "system", content: CONCEPT_GENERATE_SYSTEM },
-        { role: "user", content: [{ type: "text", text: conceptPrompt }] },
+        { role: "user", content },
       ], 4000);
 
       if (result.concepts) {
@@ -822,8 +854,8 @@ export default function ThumbCraft() {
   }, [step, composed, videoAnalysis, sourceImages, extractedSubjects, headlineText]);
 
   const runCritique = async () => {
-    if (!canvasRef.current || critiqueIteration >= 3) return;
-    setCritiquing(true); setError(""); setStatus(`Critique iteration ${critiqueIteration + 1}/3...`);
+    if (!canvasRef.current || critiqueIteration >= 25) return;
+    setCritiquing(true); setError(""); setStatus(`Critique iteration ${critiqueIteration + 1}/25...`);
     try {
       const dataUrl = canvasRef.current.toDataURL("image/jpeg", 0.85);
       const result = await callAI([
@@ -840,10 +872,10 @@ export default function ThumbCraft() {
       setCritiqueResult(result);
       setFinalScore(result.score);
 
-      if (result.score >= 8 || critiqueIteration >= 2) {
+      if (result.score >= 8 || critiqueIteration >= 24) {
         setCritiquing(false);
         setStatus("Finished! Score: " + result.score + "/10");
-        setTimeout(() => setStatus(""), 3000);
+        setTimeout(() => setStatus(""), 4000);
         return;
       }
 
@@ -955,6 +987,34 @@ export default function ThumbCraft() {
             <div style={{ flex: 1, height: 1, background: "rgba(255,255,255,0.06)" }} />
             <span style={{ fontSize: 11, color: "rgba(255,255,255,0.2)", fontFamily: "'Space Mono', monospace" }}>OPTIONAL: STYLE REFERENCES</span>
             <div style={{ flex: 1, height: 1, background: "rgba(255,255,255,0.06)" }} />
+          </div>
+
+          <div style={{
+            background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.08)",
+            borderRadius: 14, padding: 20, marginBottom: 16,
+          }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+              <span style={{ fontSize: 18 }}>🔗</span>
+              <span style={{ fontSize: 14, fontWeight: 700, color: "#fff" }}>Paste YouTube Links as Style References</span>
+            </div>
+
+            <textarea
+              value={ytInput}
+              onChange={(e) => setYtInput(e.target.value)}
+              placeholder={"Paste YouTube URLs, one per line:\nhttps://www.youtube.com/watch?v=abc123\nhttps://youtu.be/def456"}
+              rows={4}
+              style={{ ...inputStyle, resize: "vertical", lineHeight: 1.6, fontSize: 13 }}
+            />
+
+            <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 12 }}>
+              <button onClick={processYoutubeUrls} disabled={ytLoading || !ytInput.trim()}
+                style={btn(!!ytInput.trim() && !ytLoading, ytLoading)}>
+                {ytLoading ? ytStatus : "Extract Thumbnails"}
+              </button>
+              {ytStatus && !ytLoading && (
+                <span style={{ fontSize: 12, color: "rgba(255,255,255,0.4)" }}>{ytStatus}</span>
+              )}
+            </div>
           </div>
 
           <DropZone onFiles={addRefs} multiple accept="image/*" style={{ marginBottom: 14 }}>
@@ -1202,7 +1262,7 @@ export default function ThumbCraft() {
                     {critiqueIteration === 0 ? "INITIAL CRITIQUE" : `CRITIQUE ITERATION ${critiqueIteration}`}
                   </div>
                   <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)" }}>
-                    {critiqueResult.score >= 8 ? "✓ Target score reached" : critiqueIteration >= 3 ? "Max iterations reached" : "Refining..."}
+                    {critiqueResult.score >= 8 ? "✓ Target score reached" : critiqueIteration >= 25 ? "Max iterations reached" : "Refining..."}
                   </div>
                 </div>
               </div>

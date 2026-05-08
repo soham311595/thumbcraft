@@ -64,37 +64,22 @@ export default defineConfig({
             }
 
             try {
-              const response = await fetch(
-                `https://youtubetranscript.com/?vid=${videoId}&format=json`,
-                {
-                  headers: {
-                    "User-Agent": "ThumbCraft/1.0",
-                    Accept: "application/json",
-                  },
-                },
-              );
-              const text = await response.text();
-              let data;
-              try { data = JSON.parse(text); }
-              catch {
-                res.statusCode = 502;
-                res.setHeader("Content-Type", "application/json");
-                res.end(JSON.stringify({ error: "Invalid response from transcript service", detail: text.slice(0, 500) }));
-                return;
-              }
-              if (!response.ok || !Array.isArray(data)) {
-                res.statusCode = response.ok ? 404 : response.status;
-                res.setHeader("Content-Type", "application/json");
-                res.end(JSON.stringify({ error: typeof data?.error === "string" ? data.error : "No captions available" }));
-                return;
-              }
+              const { fetchTranscript } = await import("youtube-transcript");
+              const segments = await fetchTranscript(videoId);
+              const normalized = segments.map((seg) => ({
+                text: seg.text,
+                start: seg.offset / 1000,
+                duration: seg.duration / 1000,
+              }));
               res.statusCode = 200;
               res.setHeader("Content-Type", "application/json");
-              res.end(JSON.stringify(data));
+              res.end(JSON.stringify(normalized));
             } catch (error) {
-              res.statusCode = 500;
+              const msg = error.message || "";
+              const code = msg.includes("disabled") ? 403 : msg.includes("unavailable") || msg.includes("not found") ? 404 : 500;
+              res.statusCode = code;
               res.setHeader("Content-Type", "application/json");
-              res.end(JSON.stringify({ error: error.message }));
+              res.end(JSON.stringify({ error: msg || "Failed to fetch transcript" }));
             }
             return;
           }

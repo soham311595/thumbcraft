@@ -1,5 +1,5 @@
-import ThumbnailStudio from "./thumbnail-studio";
+import ThumbCraft from "./thumbcraft";
 
 export default function App() {
-  return <ThumbnailStudio />;
+  return <ThumbCraft />;
 }

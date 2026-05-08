@@ -245,7 +245,7 @@ function ColorSwatch({ colors, label }) {
   );
 }
 
-export default function ThumbnailStudio() {
+export default function ThumbCraft() {
   const [step, setStep] = useState(0);
   const [refs, setRefs] = useState([]);
   const [sourceImages, setSourceImages] = useState([]);
@@ -557,7 +557,7 @@ export default function ThumbnailStudio() {
             margin: 0, fontSize: 21, fontWeight: 700, fontFamily: "'Space Mono', monospace",
             background: "linear-gradient(135deg, #f72585, #b5179e, #7209b7)",
             WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent",
-          }}>Thumbnail Studio</h1>
+          }}>ThumbCraft</h1>
           <p style={{ margin: 0, fontSize: 11, color: "rgba(255,255,255,0.3)", fontFamily: "'Space Mono', monospace" }}>
             AI-powered style transfer for YouTube thumbnails
           </p>

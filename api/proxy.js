@@ -14,8 +14,8 @@ export default async function handler(req, res) {
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${apiKey}`,
-        "HTTP-Referer": process.env.VERCEL_URL || "https://thumbnail-studio.vercel.app",
-        "X-Title": "Thumbnail Studio",
+        "HTTP-Referer": process.env.VERCEL_URL || "https://thumbcraft.vercel.app",
+        "X-Title": "ThumbCraft",
       },
       body: JSON.stringify(req.body),
     });

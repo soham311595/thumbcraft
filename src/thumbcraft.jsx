@@ -1,28 +1,30 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import { loadBgRemovalModel, removeBackground, isModelLoaded } from "./backgroundRemoval";
-import { fetchYouTubeTranscript, formatTranscript } from "./transcript";
+import { fetchTranscript, formatTranscript, fetchVideoTitle } from "./transcript";
 
 const STEPS = ["input", "analyze", "concepts", "craft"];
 const STEP_LABELS = ["Video Input", "Analysis", "Concepts", "Craft"];
 
 const AI_MODEL = "openai/gpt-4o-mini";
 
-const VIDEO_ANALYZE_SYSTEM = `You are an expert YouTube strategist and thumbnail designer. Analyze the video transcript and thumbnail to understand the video's content, audience, and visual potential.
+const VIDEO_ANALYZE_SYSTEM = `You are an expert YouTube strategist and thumbnail designer. Analyze the video using the thumbnail image and any provided context (transcript or title) to understand the video's content, audience, and visual potential.
+
+If a transcript is provided, use it for deep content understanding. If not, infer everything from the thumbnail image and video title.
 
 Return ONLY valid JSON:
 {
-  "summary": "2-3 sentence summary of the video",
-  "topics": ["key topics covered"],
+  "summary": "2-3 sentence summary of what this video is about",
+  "topics": ["key topics or themes"],
   "tone": "overall emotional tone (e.g. exciting, educational, controversial, funny, shocking, mysterious)",
   "target_audience": "who this video is for",
   "key_moments": [
     {
       "timestamp_seconds": 0,
-      "description": "what happens at this moment",
-      "thumbnail_potential": "why this moment would make a compelling thumbnail visual"
+      "description": "what happens at this moment (infer from thumbnail/title if no transcript)",
+      "thumbnail_potential": "why this would make a compelling thumbnail visual"
     }
   ],
-  "suggested_visual_direction": "creative brief for the thumbnail designer — what visual approach would best capture this video"
+  "suggested_visual_direction": "creative brief for the thumbnail designer — what visual approach would best capture this video's essence"
 }`;
 
 const CONCEPT_GENERATE_SYSTEM = `You are a world-class YouTube thumbnail concept designer. Given a video's analysis and its transcript, generate 3-4 distinct thumbnail concepts.
@@ -653,21 +655,33 @@ export default function ThumbCraft() {
 
   const analyzeVideo = async () => {
     if (!videoId) { setError("Enter a valid YouTube URL"); return; }
-    setAnalyzing(true); setError(""); setStatus("Fetching transcript...");
+    setAnalyzing(true); setError(""); setStatus("Fetching video info...");
     try {
-      const segments = await fetchYouTubeTranscript(videoId);
+      const thumb = await fetchYtThumbnail(videoId);
+      setVideoThumbnail(thumb);
+
+      setStatus("Fetching video title...");
+      const title = await fetchVideoTitle(videoId);
+
+      setStatus("Fetching transcript...");
+      const segments = await fetchTranscript(videoId);
       const formatted = formatTranscript(segments, 8000);
       setTranscript(segments);
       setTranscriptText(formatted);
 
-      setStatus("Fetching video thumbnail...");
-      const thumb = await fetchYtThumbnail(videoId);
-      setVideoThumbnail(thumb);
-
       setStatus("Analyzing video content...");
+
+      let prompt = "";
+      if (formatted) {
+        prompt = `Video title: ${title || "Unknown"}\n\nTranscript:\n${formatted}`;
+      } else {
+        prompt = `Video title: ${title || "Unknown"}\n\nNo transcript available. Analyze the video thumbnail image to understand the video's content, tone, and visual direction for thumbnail creation.`;
+      }
+      prompt += "\n\nAnalyze this video for thumbnail creation. Return ONLY JSON.";
+
       const content = [
         { type: "image_url", image_url: { url: `data:image/jpeg;base64,${thumb.base64}` } },
-        { type: "text", text: `Video transcript:\n\n${formatted}\n\nAnalyze this video for thumbnail creation. Return ONLY JSON.` },
+        { type: "text", text: prompt },
       ];
 
       const result = await callAI([

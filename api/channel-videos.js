@@ -89,14 +89,22 @@ async function fetchChannelVideosFallback(channelId) {
   try {
     const tabs = data?.contents?.twoColumnBrowseResultsRenderer?.tabs || [];
     for (const tab of tabs) {
-      const contents = tab?.tabRenderer?.content?.richGridRenderer?.contents || [];
+      const tabr = tab?.tabRenderer;
+      if (tabr?.title !== "Videos") continue;
+      const contents = tabr?.content?.richGridRenderer?.contents || [];
       for (const item of contents) {
-        const renderer = item?.richItemRenderer?.content?.videoRenderer || item?.richItemRenderer?.content?.reelItemRenderer;
-        if (!renderer) continue;
-        const videoId = renderer.videoId;
-        const title = renderer?.title?.runs?.[0]?.text;
-        if (videoId && title) {
-          videos.push({ videoId, title, thumbnail: `https://img.youtube.com/vi/${videoId}/hqdefault.jpg` });
+        const rir = item?.richItemRenderer;
+        if (!rir) continue;
+        const lvm = rir?.content?.lockupViewModel;
+        const vr = rir?.content?.videoRenderer;
+        if (lvm) {
+          const videoId = lvm.contentId;
+          const title = lvm?.metadata?.lockupMetadataViewModel?.title?.content;
+          if (videoId && title) videos.push({ videoId, title, thumbnail: `https://img.youtube.com/vi/${videoId}/hqdefault.jpg` });
+        } else if (vr) {
+          const videoId = vr.videoId;
+          const title = vr?.title?.runs?.[0]?.text;
+          if (videoId && title) videos.push({ videoId, title, thumbnail: `https://img.youtube.com/vi/${videoId}/hqdefault.jpg` });
         }
       }
     }

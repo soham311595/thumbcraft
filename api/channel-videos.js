@@ -5,7 +5,7 @@ export function extractChannelId(input) {
     if (url.pathname.startsWith("/channel/")) return url.pathname.split("/")[2];
     if (url.pathname.startsWith("/c/")) return url.pathname.split("/")[2];
     if (url.pathname.startsWith("/user/")) return url.pathname.split("/")[2];
-    if (url.pathname.startsWith("/@")) return url.pathname;
+    if (url.pathname.startsWith("/@")) return url.pathname.slice(1);
   } catch {}
   return input.startsWith("@") ? input : null;
 }
@@ -38,8 +38,15 @@ export async function fetchChannelVideos(channelId) {
       },
     },
   );
-  if (!resp.ok) throw new Error("Failed to fetch channel videos");
-  const xml = await resp.text();
+  if (resp.ok) {
+    const xml = await resp.text();
+    const videos = parseRssFeed(xml);
+    if (videos.length > 0) return videos;
+  }
+  return fetchChannelVideosFallback(channelId);
+}
+
+function parseRssFeed(xml) {
   const videos = [];
   const entryRe = /<entry>([\s\S]*?)<\/entry>/g;
   let m;
@@ -50,11 +57,51 @@ export async function fetchChannelVideos(channelId) {
     if (videoId && title) {
       videos.push({
         videoId,
-        title: title.replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'"),
+        title: decodeXml(title),
         thumbnail: `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`,
       });
     }
   }
+  return videos;
+}
+
+function decodeXml(text) {
+  return text.replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'");
+}
+
+async function fetchChannelVideosFallback(channelId) {
+  const resp = await fetch(
+    `https://www.youtube.com/channel/${channelId}/videos`,
+    {
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_4) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+      },
+    },
+  );
+  if (!resp.ok) throw new Error("Failed to fetch channel videos");
+  const html = await resp.text();
+  const match = html.match(/ytInitialData\s*=\s*({.*?});/);
+  if (!match) throw new Error("Could not parse channel page");
+  let data;
+  try { data = JSON.parse(match[1]); } catch { throw new Error("Failed to parse channel data"); }
+  const videos = [];
+  try {
+    const tabs = data?.contents?.twoColumnBrowseResultsRenderer?.tabs || [];
+    for (const tab of tabs) {
+      const contents = tab?.tabRenderer?.content?.richGridRenderer?.contents || [];
+      for (const item of contents) {
+        const renderer = item?.richItemRenderer?.content?.videoRenderer || item?.richItemRenderer?.content?.reelItemRenderer;
+        if (!renderer) continue;
+        const videoId = renderer.videoId;
+        const title = renderer?.title?.runs?.[0]?.text;
+        if (videoId && title) {
+          videos.push({ videoId, title, thumbnail: `https://img.youtube.com/vi/${videoId}/hqdefault.jpg` });
+        }
+      }
+    }
+  } catch {}
+  if (videos.length === 0) throw new Error("No videos found on this channel");
   return videos;
 }
 

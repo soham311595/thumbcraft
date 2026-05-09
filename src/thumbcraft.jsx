@@ -618,6 +618,10 @@ export default function ThumbCraft() {
   const [ytInput, setYtInput] = useState("");
   const [ytLoading, setYtLoading] = useState(false);
   const [ytStatus, setYtStatus] = useState("");
+  const [channelUrl, setChannelUrl] = useState("");
+  const [channelVideos, setChannelVideos] = useState([]);
+  const [channelLoading, setChannelLoading] = useState(false);
+  const [selectedChannelVids, setSelectedChannelVids] = useState(new Set());
 
   const [analyzing, setAnalyzing] = useState(false);
   const [videoAnalysis, setVideoAnalysis] = useState(null);
@@ -682,6 +686,48 @@ export default function ThumbCraft() {
     setYtStatus(`Added ${added} thumbnail${added !== 1 ? "s" : ""}${failed ? `, ${failed} failed` : ""}`);
     setYtLoading(false);
     setTimeout(() => setYtStatus(""), 4000);
+  };
+
+  const loadChannelVideos = async () => {
+    if (!channelUrl.trim()) return;
+    setChannelLoading(true); setError("");
+    try {
+      const resp = await fetch(`/api/channel-videos?url=${encodeURIComponent(channelUrl.trim())}`);
+      const data = await resp.json();
+      if (data.error) throw new Error(data.error);
+      setChannelVideos(data.videos || []);
+      setSelectedChannelVids(new Set());
+    } catch (e) { setError(`Failed to load channel: ${e.message}`); }
+    setChannelLoading(false);
+  };
+
+  const toggleChannelVideo = (videoId) => {
+    setSelectedChannelVids((prev) => {
+      const next = new Set(prev);
+      if (next.has(videoId)) next.delete(videoId); else next.add(videoId);
+      return next;
+    });
+  };
+
+  const addSelectedChannelVideos = async () => {
+    const selected = channelVideos.filter((v) => selectedChannelVids.has(v.videoId));
+    if (!selected.length) return;
+    setYtLoading(true); setError("");
+    let added = 0;
+    for (const v of selected) {
+      if (refs.length + added >= 15) break;
+      try {
+        const result = await fetchYtThumbnail(v.videoId);
+        const small = await resizeImage(result.base64, 512);
+        setRefs((prev) => [...prev, { base64: small, preview: result.preview, videoId: result.videoId, source: "youtube" }]);
+        added++;
+      } catch {}
+    }
+    setYtStatus(`Added ${added} reference${added > 1 ? "s" : ""}`);
+    setChannelVideos([]);
+    setSelectedChannelVids(new Set());
+    setTimeout(() => setYtStatus(""), 3000);
+    setYtLoading(false);
   };
 
   const analyzeVideo = async () => {
@@ -1020,6 +1066,71 @@ export default function ThumbCraft() {
                 <span style={{ fontSize: 12, color: "rgba(255,255,255,0.4)" }}>{ytStatus}</span>
               )}
             </div>
+          </div>
+
+          <div style={{
+            background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.08)",
+            borderRadius: 14, padding: 20, marginBottom: 16,
+          }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+              <span style={{ fontSize: 18 }}>📺</span>
+              <span style={{ fontSize: 14, fontWeight: 700, color: "#fff" }}>Browse Channel Videos</span>
+            </div>
+
+            <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+              <input type="text" value={channelUrl} onChange={(e) => setChannelUrl(e.target.value)}
+                placeholder="Channel URL (e.g. https://youtube.com/@channelname)"
+                style={{ ...inputStyle, maxWidth: "100%" }} />
+              <button onClick={loadChannelVideos} disabled={channelLoading || !channelUrl.trim()}
+                style={btn(!!channelUrl.trim() && !channelLoading, channelLoading)}>
+                {channelLoading ? "Loading..." : "Load Videos"}
+              </button>
+            </div>
+
+            {channelVideos.length > 0 && (
+              <div>
+                <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+                  <span style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", fontFamily: "'Space Mono', monospace" }}>
+                    {channelVideos.length} VIDEOS — click to select
+                  </span>
+                  {selectedChannelVids.size > 0 && (
+                    <button onClick={addSelectedChannelVideos} disabled={ytLoading}
+                      style={{
+                        background: "linear-gradient(135deg, #f72585, #7209b7)",
+                        border: "none", color: "#fff", borderRadius: 8,
+                        padding: "5px 14px", fontSize: 11, fontWeight: 700, cursor: "pointer",
+                        fontFamily: "'Space Mono', monospace",
+                      }}>
+                      {ytLoading ? "Adding..." : `Add Selected (${selectedChannelVids.size})`}
+                    </button>
+                  )}
+                </div>
+                <div style={{
+                  display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))",
+                  gap: 10, maxHeight: 300, overflowY: "auto",
+                  padding: 10, background: "rgba(0,0,0,0.15)", borderRadius: 10,
+                }}>
+                  {channelVideos.map((v) => {
+                    const sel = selectedChannelVids.has(v.videoId);
+                    return (
+                      <div key={v.videoId} onClick={() => toggleChannelVideo(v.videoId)} style={{
+                        cursor: "pointer", borderRadius: 8, overflow: "hidden",
+                        border: sel ? "2px solid #f72585" : "2px solid transparent",
+                        opacity: sel ? 1 : 0.65, transition: "all 0.2s",
+                        background: "#1a1a2e", flexShrink: 0,
+                      }}>
+                        <img src={v.thumbnail} alt={v.title}
+                          style={{ width: "100%", height: 78, objectFit: "cover", display: "block" }} />
+                        <div style={{
+                          fontSize: 10, padding: "4px 6px", color: "rgba(255,255,255,0.7)",
+                          lineHeight: 1.3, maxHeight: 32, overflow: "hidden",
+                        }}>{v.title}</div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
           </div>
 
           <DropZone onFiles={addRefs} multiple accept="image/*" style={{ marginBottom: 14 }}>

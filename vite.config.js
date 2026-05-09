@@ -84,6 +84,32 @@ export default defineConfig({
             return;
           }
 
+          if (url.pathname === "/api/channel-videos") {
+            const channelInput = url.searchParams.get("url") || url.searchParams.get("channel");
+            if (!channelInput) {
+              res.statusCode = 400;
+              res.setHeader("Content-Type", "application/json");
+              res.end(JSON.stringify({ error: "Missing channel URL or ID" }));
+              return;
+            }
+            try {
+              const mod = await import("./api/channel-videos.js");
+              const channelId = mod.extractChannelId?.(channelInput) || channelInput;
+              const resolvedId = channelId?.startsWith?.("@")
+                ? await mod.resolveHandleToChannelId(channelId)
+                : channelId;
+              const videos = await mod.fetchChannelVideos(resolvedId);
+              res.statusCode = 200;
+              res.setHeader("Content-Type", "application/json");
+              res.end(JSON.stringify({ channelId: resolvedId, videos }));
+            } catch (error) {
+              res.statusCode = 500;
+              res.setHeader("Content-Type", "application/json");
+              res.end(JSON.stringify({ error: error.message }));
+            }
+            return;
+          }
+
           next();
         });
       },

@@ -206,18 +206,23 @@ function loadImage(src) {
 }
 
 async function callAI(messages, maxTokens = 4000) {
+  const body = JSON.stringify({
+    model: AI_MODEL,
+    max_tokens: maxTokens,
+    messages,
+  });
   const resp = await fetch("/api/proxy", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      model: AI_MODEL,
-      max_tokens: maxTokens,
-      messages,
-    }),
+    body,
   });
   const data = await resp.json();
-  if (data.error) throw new Error(data.error.message);
+  if (data.error) {
+    const detail = data.error.metadata?.provider_name ? ` (${data.error.metadata.provider_name})` : "";
+    throw new Error(`${data.error.message}${detail}`);
+  }
   const text = data.choices?.[0]?.message?.content || "";
+  if (!text) throw new Error("Empty response from AI");
   let parsed;
   try { parsed = JSON.parse(text.replace(/```json|```/g, "").trim()); }
   catch { const m = text.match(/\{[\s\S]*\}/); if (m) parsed = JSON.parse(m[0]); else throw new Error("AI response parse failed"); }
@@ -706,7 +711,7 @@ export default function ThumbCraft() {
       prompt += "\n\nAnalyze this video for thumbnail creation. Return ONLY JSON.";
 
       const content = [
-        { type: "image_url", image_url: { url: `data:image/jpeg;base64,${thumb.base64}` } },
+        { type: "image_url", image_url: { url: `data:image/jpeg;base64,${await resizeImage(thumb.base64, 320)}` } },
         { type: "text", text: prompt },
       ];
 

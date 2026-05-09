@@ -5,7 +5,7 @@ import { fetchTranscript, formatTranscript, fetchVideoTitle } from "./transcript
 const STEPS = ["input", "analyze", "concepts", "craft"];
 const STEP_LABELS = ["Video Input", "Analysis", "Concepts", "Craft"];
 
-const AI_MODEL = "google/gemma-4-31b-it:free";
+const AI_MODEL = "openrouter/free";
 
 const VIDEO_ANALYZE_SYSTEM = `You are an expert YouTube strategist and thumbnail designer. Analyze the video using the thumbnail image and any provided context (transcript or title) to understand the video's content, audience, and visual potential.
 

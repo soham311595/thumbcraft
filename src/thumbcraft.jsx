@@ -205,6 +205,24 @@ function loadImage(src) {
   });
 }
 
+function repairJson(raw) {
+  let s = raw.replace(/```json|```/g, "").trim();
+  s = s.replace(/,(\s*[}\]])/g, "$1");
+  s = s.replace(/:\s*'([^']*)'/g, ': "$1"');
+  s = s.replace(/(['"])\s*:\s*(['"])/g, "$1: $2");
+  return s;
+}
+
+function tryParse(text) {
+  const repaired = repairJson(text);
+  try { return JSON.parse(repaired); } catch {}
+  const m = text.match(/\{[\s\S]*\}/);
+  if (m) {
+    try { return JSON.parse(repairJson(m[0])); } catch {}
+  }
+  return null;
+}
+
 async function callAI(messages, maxTokens = 4000) {
   const body = JSON.stringify({
     model: AI_MODEL,
@@ -223,9 +241,8 @@ async function callAI(messages, maxTokens = 4000) {
   }
   const text = data.choices?.[0]?.message?.content || "";
   if (!text) throw new Error("Empty response from AI");
-  let parsed;
-  try { parsed = JSON.parse(text.replace(/```json|```/g, "").trim()); }
-  catch { const m = text.match(/\{[\s\S]*\}/); if (m) parsed = JSON.parse(m[0]); else throw new Error("AI response parse failed"); }
+  const parsed = tryParse(text);
+  if (!parsed) throw new Error("AI response parse failed: " + text.slice(0, 300));
   return parsed;
 }
 

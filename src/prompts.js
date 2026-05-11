@@ -51,6 +51,43 @@ Return ONLY valid JSON — no markdown, no preamble:
   "style_tags": ["string", "string", "string"]
 }`
 
+export const FRAME_RECOMMENDATION_PROMPT = (segments, niche) => `
+You are a YouTube thumbnail strategist. Given the timestamped transcript and niche analysis,
+recommend the 3 best moments in the video to use as thumbnail reference frames, plus 2 concept
+ideas that don't need a specific video frame.
+
+TRANSCRIPT SEGMENTS (with exact timestamps):
+${JSON.stringify(segments)}
+
+NICHE ANALYSIS:
+${JSON.stringify(niche)}
+
+Return ONLY valid JSON — no markdown, no preamble:
+{
+  "recommended_frames": [
+    {
+      "timestamp": 142.0,
+      "description": "what happens in this exact moment (one sentence)",
+      "thumbnail_concept": "detailed visual description of the final generated thumbnail: subject pose, expression, text overlay text, colors, composition, lighting",
+      "reason": "why this moment drives clicks (one sentence)"
+    }
+  ],
+  "concept_ideas": [
+    {
+      "title": "short thematic label (2-3 words)",
+      "description": "text-only concept for a thumbnail without using any specific video frame — describe composition, metaphor, text overlay",
+      "reason": "why this concept would perform"
+    }
+  ]
+}
+
+RULES:
+- Timestamps must match transcript segments exactly (±2 seconds)
+- Each recommended_frame.thumbnail_concept must describe a COMPLETE thumbnail design (not just the video moment)
+- Each concept_idea must work WITHOUT any video frame as reference (pure graphic/typographic concepts)
+- Prefer frames with faces for emotional reactions, or frames with dramatic visual changes
+- If the video has no faces, focus on visual metaphors or text-heavy concepts`
+
 export const IMAGE_PROMPT_GENERATOR = (niche, style, variationIndex) => {
   const angles = [
     `Create a YouTube thumbnail INSPIRED BY but VISUALLY DISTINCT from typical ${niche.niche?.subcategory} thumbnails.`,

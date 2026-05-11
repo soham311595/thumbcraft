@@ -107,17 +107,22 @@ export async function analyzeVision(imageUrls, textContent, systemPrompt) {
 // IMAGE GENERATION - Gemini
 // Returns base64 data URL - caller must upload to storage or use directly
 // ─────────────────────────────────────────────────────────
-export async function generateThumbnail(prompt, imageConfig) {
+export async function generateThumbnail(prompt, imageConfig, referenceImageUrl) {
+  const body = {
+    prompt,
+    image_config: imageConfig || {
+      aspect_ratio: "16:9",
+      image_size: "2K",
+    },
+  };
+  if (referenceImageUrl) {
+    body.reference_image = referenceImageUrl;
+  }
+
   const res = await fetch("/api/generate-image", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      prompt,
-      image_config: imageConfig || {
-        aspect_ratio: "16:9",
-        image_size: "2K",
-      },
-    }),
+    body: JSON.stringify(body),
   });
 
   const data = await res.json();

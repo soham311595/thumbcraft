@@ -8,12 +8,19 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: "OPENROUTER_API_KEY not configured" });
   }
 
-  const { prompt, image_config } = req.body;
+  const { prompt, image_config, reference_image } = req.body;
   if (!prompt) {
     return res.status(400).json({ error: "Missing prompt" });
   }
 
   try {
+    const messageContent = reference_image
+      ? [
+          { type: "text", text: prompt },
+          { type: "image_url", image_url: { url: reference_image } },
+        ]
+      : prompt;
+
     const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -24,7 +31,7 @@ export default async function handler(req, res) {
       },
       body: JSON.stringify({
         model: "google/gemini-3.1-flash-image-preview",
-        messages: [{ role: "user", content: prompt }],
+        messages: [{ role: "user", content: messageContent }],
         modalities: ["image", "text"],
         image_config: image_config || {
           aspect_ratio: "16:9",

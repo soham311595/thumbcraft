@@ -105,7 +105,7 @@ export default defineConfig({
 
             try {
               const parsed = JSON.parse(body);
-              const { prompt, image_config } = parsed;
+              const { prompt, image_config, reference_image } = parsed;
 
               if (!prompt) {
                 res.statusCode = 400;
@@ -113,6 +113,13 @@ export default defineConfig({
                 res.end(JSON.stringify({ error: "Missing prompt" }));
                 return;
               }
+
+              const messageContent = reference_image
+                ? [
+                    { type: "text", text: prompt },
+                    { type: "image_url", image_url: { url: reference_image } },
+                  ]
+                : prompt;
 
               const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
                 method: "POST",
@@ -124,7 +131,7 @@ export default defineConfig({
                 },
                 body: JSON.stringify({
                   model: "google/gemini-3.1-flash-image-preview",
-                  messages: [{ role: "user", content: prompt }],
+                  messages: [{ role: "user", content: messageContent }],
                   modalities: ["image", "text"],
                   image_config: image_config || {
                     aspect_ratio: "16:9",
@@ -209,6 +216,70 @@ export default defineConfig({
               res.statusCode = 200;
               res.setHeader("Content-Type", "application/json");
               res.end(JSON.stringify({ videos }));
+            } catch (error) {
+              res.statusCode = 500;
+              res.setHeader("Content-Type", "application/json");
+              res.end(JSON.stringify({ error: error.message }));
+            }
+            return;
+          }
+
+          if (url.pathname === "/api/player") {
+            const videoId = url.searchParams.get("vid") || url.searchParams.get("videoId");
+            if (!videoId) {
+              res.statusCode = 400;
+              res.setHeader("Content-Type", "application/json");
+              res.end(JSON.stringify({ error: "Missing videoId" }));
+              return;
+            }
+            try {
+              const ytResp = await fetch(`https://www.youtube.com/watch?v=${videoId}`, {
+                headers: { "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36" },
+              });
+              const html = await ytResp.text();
+              const match = html.match(/ytInitialPlayerResponse\s*=\s*({.*?});\s*\n/);
+              if (!match) {
+                res.statusCode = 404;
+                res.setHeader("Content-Type", "application/json");
+                res.end(JSON.stringify({ error: "Player response not found" }));
+                return;
+              }
+              const playerResp = JSON.parse(match[1]);
+              const spec = playerResp?.storyboards?.playerStoryboardSpecRenderer?.spec;
+              const duration = playerResp?.videoDetails?.lengthSeconds;
+              const title = playerResp?.videoDetails?.title;
+              if (!spec) {
+                res.statusCode = 404;
+                res.setHeader("Content-Type", "application/json");
+                res.end(JSON.stringify({ error: "Storyboard not available for this video" }));
+                return;
+              }
+              res.statusCode = 200;
+              res.setHeader("Content-Type", "application/json");
+              res.end(JSON.stringify({ spec, duration: parseInt(duration), title }));
+            } catch (error) {
+              res.statusCode = 500;
+              res.setHeader("Content-Type", "application/json");
+              res.end(JSON.stringify({ error: error.message }));
+            }
+            return;
+          }
+
+          if (url.pathname === "/api/sprite-proxy") {
+            const spriteUrl = url.searchParams.get("url");
+            if (!spriteUrl) {
+              res.statusCode = 400;
+              res.setHeader("Content-Type", "application/json");
+              res.end(JSON.stringify({ error: "Missing url param" }));
+              return;
+            }
+            try {
+              const spriteResp = await fetch(spriteUrl);
+              const buffer = await spriteResp.arrayBuffer();
+              res.statusCode = 200;
+              res.setHeader("Content-Type", spriteResp.headers.get("Content-Type") || "image/jpeg");
+              res.setHeader("Access-Control-Allow-Origin", "*");
+              res.end(Buffer.from(buffer));
             } catch (error) {
               res.statusCode = 500;
               res.setHeader("Content-Type", "application/json");

@@ -1,11 +1,10 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import { loadBgRemovalModel, removeBackground, isModelLoaded } from "./backgroundRemoval";
 import { fetchTranscript, formatTranscript, fetchVideoTitle } from "./transcript";
+import { analyzeText, analyzeVision } from "./ai";
 
 const STEPS = ["input", "analyze", "concepts", "craft"];
 const STEP_LABELS = ["Video Input", "Analysis", "Concepts", "Craft"];
-
-const AI_MODEL = "qwen/qwen3.5-flash-02-23";
 
 const VIDEO_ANALYZE_SYSTEM = `You are an expert YouTube strategist and thumbnail designer. Analyze the video using the thumbnail image and any provided context (transcript or title) to understand the video's content, audience, and visual potential.
 
@@ -203,47 +202,6 @@ function loadImage(src) {
     img.onerror = () => res(null);
     img.src = src;
   });
-}
-
-function repairJson(raw) {
-  let s = raw.replace(/```json|```/g, "").trim();
-  s = s.replace(/,(\s*[}\]])/g, "$1");
-  s = s.replace(/:\s*'([^']*)'/g, ': "$1"');
-  s = s.replace(/(['"])\s*:\s*(['"])/g, "$1: $2");
-  return s;
-}
-
-function tryParse(text) {
-  const repaired = repairJson(text);
-  try { return JSON.parse(repaired); } catch {}
-  const m = text.match(/\{[\s\S]*\}/);
-  if (m) {
-    try { return JSON.parse(repairJson(m[0])); } catch {}
-  }
-  return null;
-}
-
-async function callAI(messages, maxTokens = 4000) {
-  const body = JSON.stringify({
-    model: AI_MODEL,
-    max_tokens: maxTokens,
-    messages,
-  });
-  const resp = await fetch("/api/proxy", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body,
-  });
-  const data = await resp.json();
-  if (data.error) {
-    const detail = data.error.metadata?.provider_name ? ` (${data.error.metadata.provider_name})` : "";
-    throw new Error(`${data.error.message}${detail}`);
-  }
-  const text = data.choices?.[0]?.message?.content || "";
-  if (!text) throw new Error("Empty response from AI");
-  const parsed = tryParse(text);
-  if (!parsed) throw new Error("AI response parse failed: " + text.slice(0, 300));
-  return parsed;
 }
 
 function ImageCard({ src, onRemove, label, small, videoId, transparent }) {
@@ -773,15 +731,11 @@ export default function ThumbCraft() {
       }
       prompt += "\n\nAnalyze this video for thumbnail creation. Return ONLY JSON.";
 
-      const content = [
-        { type: "image_url", image_url: { url: `data:image/jpeg;base64,${await resizeImage(thumb.base64, 320)}` } },
-        { type: "text", text: prompt },
-      ];
-
-      const result = await callAI([
-        { role: "system", content: VIDEO_ANALYZE_SYSTEM },
-        { role: "user", content },
-      ], 3000);
+      const result = await analyzeVision(
+        [`data:image/jpeg;base64,${await resizeImage(thumb.base64, 320)}`],
+        prompt,
+        VIDEO_ANALYZE_SYSTEM
+      );
 
       setVideoAnalysis(result);
       setStep(1);
@@ -792,22 +746,17 @@ export default function ThumbCraft() {
   const generateConcepts = async () => {
     setGeneratingConcepts(true); setError(""); setStatus("Generating concepts...");
     try {
-      const content = [];
       let textPrompt = `Video Analysis:\n${JSON.stringify(videoAnalysis, null, 2)}\n\nTranscript:\n${transcriptText.slice(0, 4000)}`;
 
       if (refs.length > 0) {
         textPrompt += `\n\nReference thumbnails are provided as images above. Analyze their visual style and incorporate elements of their style into the concepts.`;
-        for (const r of refs) {
-          content.push({ type: "image_url", image_url: { url: `data:image/jpeg;base64,${r.base64}` } });
-        }
       }
 
-      content.push({ type: "text", text: textPrompt });
-
-      const result = await callAI([
-        { role: "system", content: CONCEPT_GENERATE_SYSTEM },
-        { role: "user", content },
-      ], 4000);
+      const result = await analyzeVision(
+        refs.map(r => `data:image/jpeg;base64,${r.base64}`),
+        textPrompt,
+        CONCEPT_GENERATE_SYSTEM
+      );
 
       if (result.concepts) {
         setConcepts(result.concepts);
@@ -873,33 +822,22 @@ export default function ThumbCraft() {
     setCritiqueResult(null);
     setFinalScore(null);
     try {
-      const content = [];
       const subjectsToSend = extractedSubjects.length > 0
         ? [...selectedSubjects].map((i) => extractedSubjects[i])
         : [];
 
-      if (subjectsToSend.length > 0) {
-        for (const s of subjectsToSend) {
-          const resized = await resizeToPng(s.dataUrl, 512);
-          content.push({ type: "image_url", image_url: { url: resized } });
-        }
-      } else {
-        for (const s of sourceImages) {
-          const small = await resizeImage(s.base64, 800);
-          content.push({ type: "image_url", image_url: { url: `data:image/jpeg;base64,${small}` } });
-        }
-      }
+      const imageUrls = subjectsToSend.length > 0
+        ? await Promise.all(subjectsToSend.map(async (s) => await resizeToPng(s.dataUrl, 512)))
+        : await Promise.all(sourceImages.map(async (s) => `data:image/jpeg;base64,${await resizeImage(s.base64, 800)}`));
 
       const selectedConceptData = concepts[selectedConcept] || {};
-      content.push({
-        type: "text",
-        text: `${subjectsToSend.length > 0 ? subjectsToSend.length + " extracted subject(s)" : sourceImages.length + " source image(s)"}\nConcept: ${JSON.stringify(selectedConceptData)}\nVideo Analysis: ${JSON.stringify(videoAnalysis)}\nHeadline: "${headlineText || selectedConceptData.headline || ""}"\nReturn ONLY JSON.`,
-      });
+      const textPrompt = `${subjectsToSend.length > 0 ? subjectsToSend.length + " extracted subject(s)" : sourceImages.length + " source image(s)"}\nConcept: ${JSON.stringify(selectedConceptData)}\nVideo Analysis: ${JSON.stringify(videoAnalysis)}\nHeadline: "${headlineText || selectedConceptData.headline || ""}"\nReturn ONLY JSON.`;
 
-      const result = await callAI([
-        { role: "system", content: COMPOSE_SYSTEM },
-        { role: "user", content },
-      ], 4000);
+      const result = await analyzeVision(
+        imageUrls,
+        textPrompt,
+        COMPOSE_SYSTEM
+      );
 
       setComposed(result);
       if (result.headline_text && !headlineText) setHeadlineText(result.headline_text);
@@ -926,16 +864,11 @@ export default function ThumbCraft() {
     setCritiquing(true); setError(""); setStatus(`Critique iteration ${critiqueIteration + 1}/25...`);
     try {
       const dataUrl = canvasRef.current.toDataURL("image/jpeg", 0.85);
-      const result = await callAI([
-        { role: "system", content: CRITIQUE_SYSTEM },
-        {
-          role: "user",
-          content: [
-            { type: "image_url", image_url: { url: dataUrl } },
-            { type: "text", text: `Current composition:\n${JSON.stringify(composed, null, 2)}\n\nCritique this thumbnail and return refined_layers to improve it. Score it 1-10. Return ONLY JSON.` },
-          ],
-        },
-      ], 4000);
+      const result = await analyzeVision(
+        [dataUrl],
+        `Current composition:\n${JSON.stringify(composed, null, 2)}\n\nCritique this thumbnail and return refined_layers to improve it. Score it 1-10. Return ONLY JSON.`,
+        CRITIQUE_SYSTEM
+      );
 
       setCritiqueResult(result);
       setFinalScore(result.score);

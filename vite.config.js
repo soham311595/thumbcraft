@@ -169,6 +169,54 @@ export default defineConfig({
             return;
           }
 
+          if (url.pathname === "/api/youtube-search") {
+            const query = url.searchParams.get("q") || url.searchParams.get("query");
+            if (!query) {
+              res.statusCode = 400;
+              res.setHeader("Content-Type", "application/json");
+              res.end(JSON.stringify({ error: "Missing search query" }));
+              return;
+            }
+            const ytKey = process.env.YOUTUBE_API_KEY;
+            if (!ytKey) {
+              res.statusCode = 500;
+              res.setHeader("Content-Type", "application/json");
+              res.end(JSON.stringify({ error: "YOUTUBE_API_KEY not configured" }));
+              return;
+            }
+            try {
+              const ytUrl = new URL("https://www.googleapis.com/youtube/v3/search");
+              ytUrl.searchParams.set("part", "snippet");
+              ytUrl.searchParams.set("q", query);
+              ytUrl.searchParams.set("type", "video");
+              ytUrl.searchParams.set("order", "viewCount");
+              ytUrl.searchParams.set("maxResults", "8");
+              ytUrl.searchParams.set("key", ytKey);
+              const resp = await fetch(ytUrl.toString());
+              const data = await resp.json();
+              if (!resp.ok || data.error) {
+                res.statusCode = resp.status;
+                res.setHeader("Content-Type", "application/json");
+                res.end(JSON.stringify({ error: data.error?.message || "YouTube API error" }));
+                return;
+              }
+              const videos = (data.items || []).map((item) => ({
+                videoId: item.id?.videoId,
+                title: item.snippet?.title,
+                channelTitle: item.snippet?.channelTitle,
+                thumbnail: `https://img.youtube.com/vi/${item.id?.videoId}/maxresdefault.jpg`,
+              })).filter((v) => v.videoId);
+              res.statusCode = 200;
+              res.setHeader("Content-Type", "application/json");
+              res.end(JSON.stringify({ videos }));
+            } catch (error) {
+              res.statusCode = 500;
+              res.setHeader("Content-Type", "application/json");
+              res.end(JSON.stringify({ error: error.message }));
+            }
+            return;
+          }
+
           if (url.pathname === "/api/channel-videos") {
             const channelInput = url.searchParams.get("url") || url.searchParams.get("channel");
             if (!channelInput) {

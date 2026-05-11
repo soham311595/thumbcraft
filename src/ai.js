@@ -51,7 +51,7 @@ async function orChat(body) {
 // TEXT ANALYSIS - Nemotron
 // Used for: niche analysis (transcript → JSON), concept gen, composition, critique
 // ─────────────────────────────────────────────────────────
-export async function analyzeText(prompt, systemPrompt) {
+export async function analyzeText(prompt, systemPrompt, options = {}) {
   const messages = systemPrompt
     ? [
         { role: "system", content: systemPrompt },
@@ -66,6 +66,7 @@ export async function analyzeText(prompt, systemPrompt) {
   });
 
   const text = extractText(data);
+  if (options.raw) return text;
   const parsed = tryParse(text);
   if (!parsed) throw new Error("Nemotron response parse failed: " + text.slice(0, 300));
   return parsed;

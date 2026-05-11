@@ -1,7 +1,7 @@
-import { useState, useRef, useCallback } from "react"
+import { useState, useRef } from "react"
 import { analyzeText, analyzeVision, generateThumbnail } from "./ai"
 import { fetchTranscript, formatTranscript, fetchVideoTitle } from "./transcript"
-import { fetchStoryboardSpec, parseSpec, extractFrame } from "./storyboard"
+
 import {
   NICHE_ANALYSIS_PROMPT,
   STYLE_ANALYSIS_PROMPT,
@@ -15,7 +15,6 @@ import {
   RefreshCw,
   Sparkles,
   Search,
-  Image as ImageIcon,
   Video,
 } from "lucide-react"
 import Canvas from "./components/Editor/Canvas"
@@ -78,6 +77,44 @@ function formatTimestamp(sec) {
   return `${m}:${s.toString().padStart(2, "0")}`
 }
 
+function loadImageAsDataUrl(url) {
+  return new Promise((resolve, reject) => {
+    const img = new Image()
+    img.crossOrigin = "anonymous"
+    img.onload = () => {
+      const c = document.createElement("canvas")
+      c.width = img.naturalWidth
+      c.height = img.naturalHeight
+      c.getContext("2d").drawImage(img, 0, 0)
+      resolve(c.toDataURL("image/jpeg", 0.85))
+    }
+    img.onerror = reject
+    img.src = url
+  })
+}
+
+function getVideoDuration(segments) {
+  if (!segments?.length) return 0
+  return segments[segments.length - 1].start + segments[segments.length - 1].duration
+}
+
+const AUTO_THUMBNAIL_INTERVALS = [0, 0.25, 0.5, 0.75]
+
+function getAutoThumbnailIndex(timestampSec, durationSec) {
+  if (!durationSec) return 0
+  const ratio = timestampSec / durationSec
+  let closest = 0
+  let closestDist = Infinity
+  for (let i = 0; i < AUTO_THUMBNAIL_INTERVALS.length; i++) {
+    const dist = Math.abs(ratio - AUTO_THUMBNAIL_INTERVALS[i])
+    if (dist < closestDist) {
+      closestDist = dist
+      closest = i
+    }
+  }
+  return closest
+}
+
 function Stepper({ step, onStep, steps, labels }) {
   return (
     <div style={{ display: "flex", gap: 4, alignItems: "center", marginBottom: 28, flexWrap: "wrap" }}>
@@ -129,13 +166,10 @@ export default function ThumbCraft() {
   const [nicheAnalysis, setNicheAnalysis] = useState(null)
 
   // Step 2 — Frame Selection
-  const [storyboardSpec, setStoryboardSpec] = useState(null)
   const [frameRecs, setFrameRecs] = useState(null)
   const [conceptIdeas, setConceptIdeas] = useState([])
-  const [frameThumbnails, setFrameThumbnails] = useState({})
-  const [scrubValues, setScrubValues] = useState({})
+  const [selectedThumbnailIndex, setSelectedThumbnailIndex] = useState({})
   const [framesLoading, setFramesLoading] = useState(false)
-  const [videoDuration, setVideoDuration] = useState(0)
 
   // Step 3 — Generate
   const [selectedFrameTimestamp, setSelectedFrameTimestamp] = useState(null)
@@ -201,72 +235,46 @@ export default function ThumbCraft() {
     setStep(2)
 
     try {
-      setStatus("Fetching storyboard...")
-      const playerData = await fetchStoryboardSpec(videoId)
-      const parsed = parseSpec(playerData.spec)
-      setStoryboardSpec(parsed)
-      setVideoDuration(playerData.duration || 0)
-
       setStatus("Analyzing transcript for frame recommendations...")
       const frameResult = await analyzeText(
         FRAME_RECOMMENDATION_PROMPT(transcript, nicheAnalysis),
       )
-      setFrameRecs(frameResult.recommended_frames || [])
-      setConceptIdeas(frameResult.concept_ideas || [])
-
-      setStatus("Extracting frame thumbnails...")
 
       const recs = frameResult.recommended_frames || []
-      const initialScrub = {}
-      const thumbMap = {}
-
+      const duration = getVideoDuration(transcript)
+      const thumbIdx = {}
       for (let i = 0; i < recs.length; i++) {
-        const ts = recs[i].timestamp
-        const tsMs = ts * 1000
-        initialScrub[i] = ts
-        try {
-          const dataUrl = await extractFrame(parsed, tsMs)
-          thumbMap[i] = dataUrl
-        } catch {
-          thumbMap[i] = null
-        }
+        thumbIdx[i] = getAutoThumbnailIndex(recs[i].timestamp, duration)
       }
 
-      setScrubValues(initialScrub)
-      setFrameThumbnails(thumbMap)
-      setStatus("")
+      setFrameRecs(recs)
+      setConceptIdeas(frameResult.concept_ideas || [])
+      setSelectedThumbnailIndex(thumbIdx)
     } catch (e) {
       console.error("Frame analysis error:", e)
       setError("Frame analysis failed: " + e.message)
       setFrameRecs(null)
-      setStoryboardSpec(null)
     } finally {
       setFramesLoading(false)
       setStatus("")
     }
   }
 
-  // ─── Scrub handler ──────────────────────────────────────
-  const scrubTimerRef = useRef(null)
-  const handleScrub = (recIndex, newTimestamp) => {
-    setScrubValues((prev) => ({ ...prev, [recIndex]: newTimestamp }))
-    if (scrubTimerRef.current) clearTimeout(scrubTimerRef.current)
-    scrubTimerRef.current = setTimeout(async () => {
-      if (!storyboardSpec || !frameRecs) return
-      try {
-        const dataUrl = await extractFrame(storyboardSpec, newTimestamp * 1000)
-        setFrameThumbnails((prev) => ({ ...prev, [recIndex]: dataUrl }))
-      } catch {}
-    }, 150)
-  }
-
-  // ─── Select Frame ───────────────────────────────────────
-  const handleSelectFrame = (recIndex) => {
+  // ─── Select Frame (auto-thumbnail) ──────────────────────
+  const handleSelectFrame = async (recIndex, thumbIndex) => {
     const rec = frameRecs[recIndex]
-    const dataUrl = frameThumbnails[recIndex]
-    const ts = scrubValues[recIndex] ?? rec.timestamp
+    const duration = getVideoDuration(transcript)
+    const url = `https://img.youtube.com/vi/${videoId}/${thumbIndex}.jpg`
+    const ts = duration ? (thumbIndex / 4) * duration : rec.timestamp
+
+    try {
+      const dataUrl = await loadImageAsDataUrl(url)
+      setSelectedFrameDataUrl(dataUrl)
+    } catch {
+      setSelectedFrameDataUrl(url)
+    }
+
     setSelectedFrameTimestamp(ts)
-    setSelectedFrameDataUrl(dataUrl)
     setSelectedConceptTitle(null)
     setStep(3)
   }
@@ -632,7 +640,7 @@ export default function ThumbCraft() {
             <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "60px 20px", gap: 16 }}>
               <Loader2 size={32} className="spinner" style={{ color: "#b5179e" }} />
               <p style={{ fontSize: 14, color: "rgba(255,255,255,0.5)", fontFamily: "'Space Mono', monospace" }}>
-                Analyzing transcript and extracting frames...
+                Analyzing transcript for frame recommendations...
               </p>
             </div>
           ) : frameRecs && frameRecs.length > 0 ? (
@@ -642,69 +650,75 @@ export default function ThumbCraft() {
                   Pick a Frame
                 </h2>
                 <p style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", margin: 0 }}>
-                  AI-recommended moments from your video — drag the slider to fine-tune (±10s)
+                  AI-recommended moments from your video — choose the closest auto-thumbnail
                 </p>
               </div>
 
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: 16, marginBottom: 32 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(360px, 1fr))", gap: 20, marginBottom: 32 }}>
                 {frameRecs.map((rec, i) => {
-                  const currentTs = scrubValues[i] ?? rec.timestamp
-                  const tsMin = Math.max(0, rec.timestamp - 10)
-                  const tsMax = videoDuration ? Math.min(rec.timestamp + 10, videoDuration) : rec.timestamp + 10
-                  const previewUrl = frameThumbnails[i]
+                  const recommendedIdx = selectedThumbnailIndex[i] ?? 0
 
                   return (
-                    <div key={i} style={{ ...cardStyle, display: "flex", flexDirection: "column" }}>
-                      <div style={{ borderRadius: 10, overflow: "hidden", background: "#000", marginBottom: 12, aspectRatio: "16/9", position: "relative" }}>
-                        {previewUrl ? (
-                          <img src={previewUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
-                        ) : (
-                          <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", background: "#1a1a2e", color: "rgba(255,255,255,0.2)", fontSize: 11, fontFamily: "'Space Mono', monospace" }}>
-                            Failed to load
-                          </div>
-                        )}
-                        <div style={{ position: "absolute", bottom: 6, left: 6, background: "rgba(0,0,0,0.75)", padding: "2px 8px", borderRadius: 6, fontSize: 11, fontWeight: 700, fontFamily: "'Space Mono', monospace", color: "#fff" }}>
-                          {formatTimestamp(currentTs)}
-                        </div>
-                      </div>
-
-                      <div style={{ marginBottom: 10 }}>
-                        <input
-                          type="range"
-                          min={tsMin}
-                          max={tsMax}
-                          step={0.5}
-                          value={currentTs}
-                          onChange={(e) => handleScrub(i, parseFloat(e.target.value))}
-                          style={{ width: "100%", accentColor: "#f72585" }}
-                        />
-                        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "rgba(255,255,255,0.3)", fontFamily: "'Space Mono', monospace", marginTop: 2 }}>
-                          <span>{formatTimestamp(tsMin)}</span>
-                          <span>{formatTimestamp(tsMax)}</span>
-                        </div>
-                      </div>
-
-                      <div style={{ fontSize: 13, fontWeight: 600, color: "#fff", marginBottom: 4, lineHeight: 1.4 }}>
+                    <div key={i} style={cardStyle}>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: "#fff", marginBottom: 6 }}>
                         {rec.description}
                       </div>
-                      <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginBottom: 12, lineHeight: 1.5, flex: 1 }}>
+                      <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginBottom: 14, lineHeight: 1.5 }}>
                         {rec.reason}
+                      </div>
+
+                      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 6, marginBottom: 12 }}>
+                        {[0, 1, 2, 3].map((tIdx) => {
+                          const isRec = tIdx === recommendedIdx
+                          const thumbUrl = `https://img.youtube.com/vi/${videoId}/${tIdx}.jpg`
+                          return (
+                            <div
+                              key={tIdx}
+                              onClick={() => handleSelectFrame(i, tIdx)}
+                              style={{
+                                cursor: "pointer", borderRadius: 8, overflow: "hidden",
+                                border: isRec ? "2px solid #f72585" : "2px solid transparent",
+                                outline: isRec ? "2px solid rgba(247,37,133,0.3)" : "none",
+                                transition: "all 0.15s", position: "relative",
+                              }}>
+                              <img
+                                src={thumbUrl}
+                                alt=""
+                                style={{ width: "100%", aspectRatio: "16/9", objectFit: "cover", display: "block" }}
+                                onError={(e) => { e.target.src = `https://img.youtube.com/vi/${videoId}/hqdefault.jpg` }}
+                              />
+                              {isRec && (
+                                <div style={{ position: "absolute", top: 3, left: 3, background: "#f72585", color: "#fff", fontSize: 8, fontWeight: 700, padding: "1px 5px", borderRadius: 4, fontFamily: "'Space Mono', monospace" }}>
+                                  AI
+                                </div>
+                              )}
+                            </div>
+                          )
+                        })}
                       </div>
 
                       <div style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", marginBottom: 12, lineHeight: 1.5, padding: "8px 12px", background: "rgba(255,255,255,0.03)", borderRadius: 8, border: "1px solid rgba(255,255,255,0.06)" }}>
                         <strong style={{ color: "rgba(255,255,255,0.7)" }}>Final concept:</strong> {rec.thumbnail_concept}
                       </div>
 
-                      <button onClick={() => handleSelectFrame(i)}
-                        style={{ ...btn(true), width: "100%", justifyContent: "center" }}>
-                        <ImageIcon size={14} /> Use This Frame →
-                      </button>
+                      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 6 }}>
+                        {[0, 1, 2, 3].map((tIdx) => (
+                          <button
+                            key={tIdx}
+                            onClick={() => handleSelectFrame(i, tIdx)}
+                            style={{
+                              ...btn(true), padding: "8px 4px", fontSize: 10, justifyContent: "center",
+                              background: tIdx === recommendedIdx ? "linear-gradient(135deg, #f72585, #7209b7)" : "rgba(255,255,255,0.08)",
+                            }}>
+                            Use #{tIdx + 1}
+                          </button>
+                        ))}
+                      </div>
                     </div>
                   )
                 })}
               </div>
 
-              {/* Concept Ideas */}
               {conceptIdeas.length > 0 && (
                 <div style={{ marginBottom: 22 }}>
                   <h2 style={{ fontSize: 16, fontWeight: 700, color: "#fff", margin: "0 0 4px" }}>
@@ -742,7 +756,7 @@ export default function ThumbCraft() {
           ) : (
             <div style={{ textAlign: "center", padding: "40px 20px" }}>
               <p style={{ fontSize: 14, color: "rgba(255,255,255,0.4)", marginBottom: 16 }}>
-                Failed to analyze frames. Try researching competition or go back to input.
+                Failed to analyze frames. Try again.
               </p>
               <button onClick={openFrameSelection} style={btn(true)}>
                 <RefreshCw size={14} /> Retry Frame Analysis

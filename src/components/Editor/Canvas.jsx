@@ -37,26 +37,25 @@ const Canvas = forwardRef(function Canvas({ initialImageUrl, onSelectionChange, 
       c.renderAll()
       emitChange()
     },
-    addImage(url) {
+    async addImage(url) {
       const c = fabricRef.current
       if (!c) return
-      FabricImage.fromURL(
-        url,
-        (img) => {
-          img.set({
-            left: 200,
-            top: 200,
-            scaleX: 0.5,
-            scaleY: 0.5,
-            name: `img_${Date.now()}`,
-          })
-          c.add(img)
-          c.setActiveObject(img)
-          c.renderAll()
-          emitChange()
-        },
-        { crossOrigin: "anonymous" }
-      )
+      try {
+        const img = await FabricImage.fromURL(url, { crossOrigin: "anonymous" })
+        img.set({
+          left: 200,
+          top: 200,
+          scaleX: 0.5,
+          scaleY: 0.5,
+          name: `img_${Date.now()}`,
+        })
+        c.add(img)
+        c.setActiveObject(img)
+        c.renderAll()
+        emitChange()
+      } catch (e) {
+        console.error("Failed to load image", e)
+      }
     },
     removeSelected() {
       const c = fabricRef.current
@@ -132,30 +131,29 @@ const Canvas = forwardRef(function Canvas({ initialImageUrl, onSelectionChange, 
         c.renderAll()
       }
     },
-    swapBackground(url) {
+    async swapBackground(url) {
       const c = fabricRef.current
       if (!c) return
-      const bg = c.getObjects().find((o) => o.name === "background")
-      if (bg) c.remove(bg)
-      FabricImage.fromURL(
-        url,
-        (img) => {
-          img.set({
-            left: 0,
-            top: 0,
-            scaleX: CANVAS_W / (img.width || CANVAS_W),
-            scaleY: CANVAS_H / (img.height || CANVAS_H),
-            selectable: false,
-            evented: false,
-            name: "background",
-          })
-          c.add(img)
-          c.sendToBack(img)
-          c.renderAll()
-          emitChange()
-        },
-        { crossOrigin: "anonymous" }
-      )
+      try {
+        const bg = c.getObjects().find((o) => o.name === "background")
+        if (bg) c.remove(bg)
+        const img = await FabricImage.fromURL(url, { crossOrigin: "anonymous" })
+        img.set({
+          left: 0,
+          top: 0,
+          scaleX: CANVAS_W / (img.width || CANVAS_W),
+          scaleY: CANVAS_H / (img.height || CANVAS_H),
+          selectable: false,
+          evented: false,
+          name: "background",
+        })
+        c.add(img)
+        c.sendToBack(img)
+        c.renderAll()
+        emitChange()
+      } catch (e) {
+        console.error("Failed to swap background", e)
+      }
     },
   }))
 
@@ -181,6 +179,7 @@ const Canvas = forwardRef(function Canvas({ initialImageUrl, onSelectionChange, 
 
   useEffect(() => {
     if (!canvasElRef.current || !containerRef.current) return
+    let disposed = false
 
     const containerW = containerRef.current.offsetWidth
     const scale = containerW / CANVAS_W
@@ -197,9 +196,9 @@ const Canvas = forwardRef(function Canvas({ initialImageUrl, onSelectionChange, 
     setReady(true)
 
     if (initialImageUrl) {
-      FabricImage.fromURL(
-        initialImageUrl,
-        (img) => {
+      FabricImage.fromURL(initialImageUrl, { crossOrigin: "anonymous" })
+        .then((img) => {
+          if (disposed) return
           img.set({
             left: 0,
             top: 0,
@@ -212,9 +211,8 @@ const Canvas = forwardRef(function Canvas({ initialImageUrl, onSelectionChange, 
           c.add(img)
           c.sendToBack(img)
           c.renderAll()
-        },
-        { crossOrigin: "anonymous" }
-      )
+        })
+        .catch((e) => console.error("Failed to load canvas background", e))
     }
 
     c.on("selection:created", handleSelection)
@@ -227,7 +225,10 @@ const Canvas = forwardRef(function Canvas({ initialImageUrl, onSelectionChange, 
     c.on("object:added", emitChange)
     c.on("object:removed", emitChange)
 
-    return () => c.dispose()
+    return () => {
+      disposed = true
+      c.dispose()
+    }
   }, [initialImageUrl])
 
   return (

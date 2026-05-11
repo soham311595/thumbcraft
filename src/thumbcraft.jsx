@@ -18,7 +18,7 @@ import Canvas from "./components/Editor/Canvas"
 import { Toolbar } from "./components/Editor/Toolbar"
 import { LayersPanel } from "./components/Editor/LayersPanel"
 import { PropertiesPanel } from "./components/Editor/PropertiesPanel"
-import { AIEditPanel } from "./components/Editor/AIEditPanel"
+
 
 const STEPS = ["input", "niche", "style", "generate"]
 const STEP_LABELS = ["Video", "Niche", "Style Research", "Generate"]
@@ -128,7 +128,6 @@ export default function ThumbCraft() {
 
   // Editor
   const [editingThumbnail, setEditingThumbnail] = useState(null)
-  const [showAIEdit, setShowAIEdit] = useState(false)
   const canvasRef = useRef(null)
   const [selectedObject, setSelectedObject] = useState(null)
   const [canvasObjects, setCanvasObjects] = useState([])
@@ -221,7 +220,7 @@ export default function ThumbCraft() {
     setStatus("Generating thumbnails...")
 
     try {
-      const prompts = [0, 1, 2].map((i) =>
+      const prompts = [0].map((i) =>
         IMAGE_PROMPT_GENERATOR(nicheAnalysis, styleAnalysis, i),
       )
       const results = await Promise.allSettled(prompts.map((p) => generateThumbnail(p)))
@@ -244,7 +243,6 @@ export default function ThumbCraft() {
   const openEditor = (thumb) => {
     setEditingThumbnail(thumb)
     setView("editor")
-    setShowAIEdit(false)
   }
 
   const closeEditor = () => {
@@ -323,7 +321,6 @@ export default function ThumbCraft() {
         <Toolbar
           canvasRef={canvasRef}
           selectedObject={selectedObject}
-          onAIEditToggle={() => setShowAIEdit((p) => !p)}
           onExport={handleExport}
         />
 
@@ -365,14 +362,6 @@ export default function ThumbCraft() {
                 selectedObject={selectedObject}
               />
             </div>
-            {showAIEdit && (
-              <div style={{ padding: 16, borderTop: "1px solid rgba(255,255,255,0.06)" }}>
-                <AIEditPanel
-                  originalPrompt={editingThumbnail.prompt || editingThumbnail.dataUrl}
-                  canvasRef={canvasRef}
-                />
-              </div>
-            )}
           </div>
         </div>
       </div>

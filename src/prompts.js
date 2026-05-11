@@ -77,15 +77,4 @@ REQUIREMENTS:
 - Photorealistic or high-quality graphic style`
 }
 
-export const AI_EDIT_PROMPT = (originalPrompt, userRequest) => `
-You are editing a YouTube thumbnail generation prompt.
 
-ORIGINAL PROMPT:
-${originalPrompt}
-
-USER WANTS TO CHANGE:
-${userRequest}
-
-Write a new complete prompt incorporating the change while preserving everything else (same concept, composition, text overlay) unless the user is specifically changing those.
-
-Return ONLY the new prompt — no explanation, no preamble.`

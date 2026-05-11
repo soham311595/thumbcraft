@@ -1,6 +1,6 @@
-import { Type, Image, ArrowUp, ArrowDown, Trash2, Download, Wand2 } from "lucide-react"
+import { Type, Image, ArrowUp, ArrowDown, Trash2, Download } from "lucide-react"
 
-export function Toolbar({ canvasRef, selectedObject, onAIEditToggle, onExport }) {
+export function Toolbar({ canvasRef, selectedObject, onExport }) {
   const isText = selectedObject && ["textbox", "i-text"].includes(selectedObject.type)
 
   return (
@@ -46,11 +46,6 @@ export function Toolbar({ canvasRef, selectedObject, onAIEditToggle, onExport })
       </button>
 
       <div style={{ flex: 1 }} />
-
-      <button onClick={onAIEditToggle}
-        style={{ ...btnStyle, background: "rgba(147,51,234,0.2)", color: "#a78bfa" }}>
-        <Wand2 size={15} /> AI Edit
-      </button>
 
       <button onClick={onExport}
         style={{ ...btnStyle, background: "rgba(34,197,94,0.2)", color: "#4ade80" }}>

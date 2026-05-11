@@ -201,16 +201,16 @@ export default function ThumbCraft() {
     setStep(2)
 
     try {
-      const [{ spec, duration }, frameResult] = await Promise.all([
-        fetchStoryboardSpec(videoId),
-        analyzeText(
-          FRAME_RECOMMENDATION_PROMPT(transcript, nicheAnalysis),
-        ),
-      ])
-
-      const parsed = parseSpec(spec)
+      setStatus("Fetching storyboard...")
+      const playerData = await fetchStoryboardSpec(videoId)
+      const parsed = parseSpec(playerData.spec)
       setStoryboardSpec(parsed)
-      setVideoDuration(duration || 0)
+      setVideoDuration(playerData.duration || 0)
+
+      setStatus("Analyzing transcript for frame recommendations...")
+      const frameResult = await analyzeText(
+        FRAME_RECOMMENDATION_PROMPT(transcript, nicheAnalysis),
+      )
       setFrameRecs(frameResult.recommended_frames || [])
       setConceptIdeas(frameResult.concept_ideas || [])
 
@@ -236,6 +236,7 @@ export default function ThumbCraft() {
       setFrameThumbnails(thumbMap)
       setStatus("")
     } catch (e) {
+      console.error("Frame analysis error:", e)
       setError("Frame analysis failed: " + e.message)
       setFrameRecs(null)
       setStoryboardSpec(null)

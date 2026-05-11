@@ -233,18 +233,32 @@ export default defineConfig({
               return;
             }
             try {
-              const ytResp = await fetch(`https://www.youtube.com/watch?v=${videoId}`, {
-                headers: { "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36" },
-              });
-              const html = await ytResp.text();
-              const match = html.match(/ytInitialPlayerResponse\s*=\s*({.*?});\s*\n/);
-              if (!match) {
-                res.statusCode = 404;
+              const innertubeResp = await fetch(
+                "https://www.youtube.com/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8",
+                {
+                  method: "POST",
+                  headers: {
+                    "Content-Type": "application/json",
+                    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+                  },
+                  body: JSON.stringify({
+                    videoId,
+                    context: {
+                      client: {
+                        clientName: "WEB",
+                        clientVersion: "2.20250217.01.00",
+                      },
+                    },
+                  }),
+                },
+              );
+              const playerResp = await innertubeResp.json();
+              if (playerResp.error) {
+                res.statusCode = 400;
                 res.setHeader("Content-Type", "application/json");
-                res.end(JSON.stringify({ error: "Player response not found" }));
+                res.end(JSON.stringify({ error: playerResp.error.message || "YouTube API error" }));
                 return;
               }
-              const playerResp = JSON.parse(match[1]);
               const spec = playerResp?.storyboards?.playerStoryboardSpecRenderer?.spec;
               const duration = playerResp?.videoDetails?.lengthSeconds;
               const title = playerResp?.videoDetails?.title;

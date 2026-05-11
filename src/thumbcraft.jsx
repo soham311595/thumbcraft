@@ -205,9 +205,17 @@ export default function ThumbCraft() {
     }
   }
 
+  // ─── Skip Style Research → go straight to Generate ─────
+  const skipStyleResearch = () => {
+    setCompetitorVideos([])
+    setCompetitorUrls([])
+    setStyleAnalysis(null)
+    setStep(3)
+  }
+
   // ─── Step 3: Generate Thumbnails ─────────────────────────
   const generateThumbnails = async () => {
-    if (!nicheAnalysis || !styleAnalysis) return
+    if (!nicheAnalysis) return
     setLoading(true)
     setError("")
     setStatus("Generating thumbnails...")
@@ -257,7 +265,7 @@ export default function ThumbCraft() {
     const canGo = {
       0: true,
       1: !!nicheAnalysis,
-      2: !!styleAnalysis,
+      2: !!nicheAnalysis,
       3: thumbnails.length > 0,
     }
     if (canGo[s]) setStep(s)
@@ -485,14 +493,51 @@ export default function ThumbCraft() {
             </div>
           </div>
 
-          <button onClick={researchCompetition} disabled={loading}
-            style={btn(!loading)}>
-            {loading ? <><Loader2 size={14} className="spinner" /> Researching...</> : <><Search size={14} /> Research Competition →</>}
-          </button>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+            <button onClick={researchCompetition} disabled={loading}
+              style={btn(!loading)}>
+              {loading ? <><Loader2 size={14} className="spinner" /> Researching...</> : <><Search size={14} /> Research Competition →</>}
+            </button>
+            <span style={{ fontSize: 11, color: "rgba(255,255,255,0.2)", fontFamily: "'Space Mono', monospace" }}>or</span>
+            <button onClick={skipStyleResearch}
+              style={{
+                background: "transparent", border: "1px solid rgba(255,255,255,0.12)",
+                color: "rgba(255,255,255,0.5)", borderRadius: 12,
+                padding: "13px 22px", fontSize: 13, fontWeight: 600, cursor: "pointer",
+                fontFamily: "'Space Mono', monospace", transition: "all 0.3s",
+              }}>
+              <Sparkles size={14} style={{ verticalAlign: "middle", marginRight: 6 }} />
+              Skip → Generate
+            </button>
+          </div>
         </div>
       )}
 
       {/* ════ STEP 2: STYLE ════ */}
+      {step === 2 && !styleAnalysis && (
+        <div style={{ textAlign: "center", padding: "40px 20px" }}>
+          <p style={{ fontSize: 14, color: "rgba(255,255,255,0.4)", marginBottom: 16 }}>
+            No competitor research was done. You can either run it now or skip to generation.
+          </p>
+          <div style={{ display: "flex", gap: 10, justifyContent: "center" }}>
+            <button onClick={researchCompetition} disabled={loading}
+              style={btn(!loading)}>
+              {loading ? <><Loader2 size={14} className="spinner" /> Researching...</> : <><Search size={14} /> Research Competition</>}
+            </button>
+            <button onClick={() => setStep(3)}
+              style={{
+                background: "transparent", border: "1px solid rgba(255,255,255,0.12)",
+                color: "rgba(255,255,255,0.5)", borderRadius: 12,
+                padding: "13px 22px", fontSize: 13, fontWeight: 600, cursor: "pointer",
+                fontFamily: "'Space Mono', monospace",
+              }}>
+              <Sparkles size={14} style={{ verticalAlign: "middle", marginRight: 6 }} />
+              Generate Thumbnails
+            </button>
+          </div>
+        </div>
+      )}
+
       {step === 2 && competitorUrls.length > 0 && styleAnalysis && (
         <div>
           <div style={{ marginBottom: 22 }}>
@@ -549,6 +594,20 @@ export default function ThumbCraft() {
       )}
 
       {/* ════ STEP 3: GENERATE ════ */}
+      {step === 3 && thumbnails.length === 0 && (
+        <div style={{ textAlign: "center", padding: "40px 20px" }}>
+          <p style={{ fontSize: 14, color: "rgba(255,255,255,0.4)", marginBottom: 16 }}>
+            {styleAnalysis
+              ? "Competitor research complete. Ready to generate your thumbnails."
+              : "Skipped competitor research. Thumbnails will be generated from your niche analysis alone."}
+          </p>
+          <button onClick={generateThumbnails} disabled={loading}
+            style={btn(!loading)}>
+            {loading ? <><Loader2 size={14} className="spinner" /> Generating...</> : <><Sparkles size={14} /> Generate Thumbnails →</>}
+          </button>
+        </div>
+      )}
+
       {step === 3 && thumbnails.length > 0 && (
         <div>
           <div style={{ marginBottom: 22 }}>

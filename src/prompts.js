@@ -67,7 +67,7 @@ COLOR MOOD: ${niche.thumbnail_strategy?.color_mood}
 ${niche.thumbnail_strategy?.face_recommended
   ? `FACE: Include a person with expression: ${niche.thumbnail_strategy?.face_expression}`
   : 'NO FACE: Focus on visual metaphor or graphic elements'}
-DIFFERENTIATION: ${style.differentiation_opportunity}
+DIFFERENTIATION: ${style?.differentiation_opportunity || "Create a unique, attention-grabbing thumbnail that stands out from typical content in this niche."}
 
 REQUIREMENTS:
 - 16:9 aspect ratio (1280x720)

@@ -547,6 +547,8 @@ export default function ThumbCraft() {
         <div>
           <Inspiration
             niche={nicheAnalysis}
+            transcript={transcript}
+            videoTitle={videoTitle}
             theme={theme}
             onSelect={handleInspirationSelect}
           />

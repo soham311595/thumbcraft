@@ -195,107 +195,131 @@ export default defineConfig({
               return;
             }
 
-            const niche = url.searchParams.get("niche") || "";
-            const subcategory = url.searchParams.get("subcategory") || "";
+            const handles = url.searchParams.get("handles") || "";
+            const creatorList = handles.split(",").map((s) => s.trim().replace(/^@/, "")).filter(Boolean);
+
+            if (creatorList.length === 0) {
+              res.statusCode = 400;
+              res.setHeader("Content-Type", "application/json");
+              res.end(JSON.stringify({ error: "No creator handles provided" }));
+              return;
+            }
 
             try {
-              async function searchVideos(q) {
-                const r = await fetch(
-                  `https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&maxResults=10&q=${encodeURIComponent(q)}&key=${apiKey}`
-                );
-                const raw = await r.text();
-                let data;
-                try { data = JSON.parse(raw); } catch { data = null; }
-                if (!r.ok || !data) return [];
-                return data.items || [];
-              }
+              const channels = await Promise.all(
+                creatorList.map(async (handle) => {
+                  const r = await fetch(
+                    `https://www.googleapis.com/youtube/v3/channels?part=statistics&forHandle=${encodeURIComponent(handle)}&key=${apiKey}`
+                  );
+                  const raw = await r.text();
+                  let data;
+                  try { data = JSON.parse(raw); } catch { data = null; }
+                  if (!r.ok || !data?.items?.length) return null;
+                  const ch = data.items[0];
+                  return {
+                    handle: `@${handle}`,
+                    channelId: ch.id,
+                    name: ch.snippet?.title || handle,
+                    totalViews: parseInt(ch.statistics?.viewCount || "0", 10),
+                    totalVideos: parseInt(ch.statistics?.videoCount || "1", 10),
+                    avgViews: Math.round(
+                      parseInt(ch.statistics?.viewCount || "0", 10) /
+                      Math.max(parseInt(ch.statistics?.videoCount || "1", 10), 1)
+                    ),
+                  };
+                })
+              );
 
-              const [broadItems, specificItems] = await Promise.all([
-                searchVideos(`${niche} channel`),
-                subcategory ? searchVideos(`${niche} ${subcategory} viral trending`) : Promise.resolve([]),
-              ]);
-
-              // Merge and deduplicate by videoId
-              const seen = new Set();
-              const merged = [];
-              for (const item of [...broadItems, ...specificItems]) {
-                if (!seen.has(item.id.videoId)) {
-                  seen.add(item.id.videoId);
-                  merged.push(item);
-                }
-              }
-
-              if (merged.length === 0) {
+              const validChannels = channels.filter(Boolean);
+              if (validChannels.length === 0) {
                 res.statusCode = 200;
                 res.setHeader("Content-Type", "application/json");
-                res.end(JSON.stringify({ results: [] }));
+                res.end(JSON.stringify({ results: [], errors: ["No channels found"] }));
                 return;
               }
 
-              const channelIds = [...new Set(merged.map((i) => i.snippet.channelId))];
-              const videoIds = merged.map((i) => i.id.videoId);
+              const rssResults = await Promise.all(
+                validChannels.map(async (ch) => {
+                  try {
+                    const r = await fetch(`https://www.youtube.com/feeds/videos.xml?channel_id=${ch.channelId}`);
+                    const xml = await r.text();
+                    const entries = [];
+                    const entryRegex = /<entry>([\s\S]*?)<\/entry>/g;
+                    let match;
+                    while ((match = entryRegex.exec(xml)) !== null) {
+                      const block = match[1];
+                      const videoId = block.match(/<yt:videoId>([^<]+)<\/yt:videoId>/)?.[1];
+                      const title = block.match(/<title>([^<]*)<\/title>/)?.[1]?.trim();
+                      const thumbnailMatch = block.match(/<media:thumbnail[^>]*url="([^"]+)"/)?.[1];
+                      if (videoId) {
+                        entries.push({
+                          videoId,
+                          title: title || "Untitled",
+                          thumbnailUrl: thumbnailMatch || `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
+                        });
+                      }
+                    }
+                    return { channel: ch, videos: entries };
+                  } catch {
+                    return { channel: ch, videos: [] };
+                  }
+                })
+              );
 
-              const [channelRaw, videoRaw] = await Promise.all([
-                fetch(`https://www.googleapis.com/youtube/v3/channels?part=statistics&id=${channelIds.join(",")}&key=${apiKey}`)
-                  .then((r) => r.text()),
-                fetch(`https://www.googleapis.com/youtube/v3/videos?part=statistics,contentDetails&id=${videoIds.join(",")}&key=${apiKey}`)
-                  .then((r) => r.text()),
-              ]);
-
-              let channelData, videoData;
-              try { channelData = JSON.parse(channelRaw); } catch { channelData = { items: [] }; }
-              try { videoData = JSON.parse(videoRaw); } catch { videoData = { items: [] }; }
-
-              const channelStatsMap = {};
-              for (const ch of channelData.items || []) {
-                channelStatsMap[ch.id] = Math.round(
-                  parseInt(ch.statistics.viewCount || "0", 10) /
-                  Math.max(parseInt(ch.statistics.videoCount || "1", 10), 1)
-                );
+              const allVideos = [];
+              const videoIdToCreator = {};
+              for (const { channel, videos } of rssResults) {
+                for (const v of videos) {
+                  allVideos.push(v.videoId);
+                  videoIdToCreator[v.videoId] = { ...channel };
+                }
               }
+
+              if (allVideos.length === 0) {
+                res.statusCode = 200;
+                res.setHeader("Content-Type", "application/json");
+                res.end(JSON.stringify({ results: [], errors: ["No videos in RSS feeds"] }));
+                return;
+              }
+
+              const videoRes = await fetch(
+                `https://www.googleapis.com/youtube/v3/videos?part=statistics,contentDetails&id=${allVideos.join(",")}&key=${apiKey}`
+              );
+              const videoRaw = await videoRes.text();
+              let videoData;
+              try { videoData = JSON.parse(videoRaw); } catch { videoData = { items: [] }; }
 
               function parseDuration(iso) {
                 const m = iso.match(/PT(?:(\d+)M)?(?:(\d+)S)?/);
                 return (parseInt(m?.[1] || "0", 10) * 60) + parseInt(m?.[2] || "0", 10);
               }
 
-              const longVideos = (videoData.items || []).filter(
-                (v) => parseDuration(v.contentDetails.duration) >= 60
-              );
-              const longVideoIds = new Set(longVideos.map((v) => v.id));
-              const filteredItems = merged.filter((i) => longVideoIds.has(i.id.videoId));
-              if (filteredItems.length === 0) {
-                res.statusCode = 200;
-                res.setHeader("Content-Type", "application/json");
-                res.end(JSON.stringify({ results: [] }));
-                return;
-              }
-
-              const videoStats = {};
-              for (const v of longVideos) {
-                videoStats[v.id] = parseInt(v.statistics.viewCount || "0", 10);
-              }
-
-              const results = filteredItems.map((item) => {
-                const vid = item.id.videoId;
-                const cid = item.snippet.channelId;
-                const viewCount = videoStats[vid] || 0;
-                const channelAvgViews = channelStatsMap[cid] || 1;
-                const viralRatio = channelAvgViews > 0 ? +(viewCount / channelAvgViews).toFixed(2) : 0;
-
-                return {
+              const results = [];
+              const seen = new Set();
+              for (const v of videoData.items || []) {
+                const vid = v.id;
+                if (seen.has(vid)) continue;
+                seen.add(vid);
+                const dur = parseDuration(v.contentDetails?.duration || "PT0S");
+                if (dur < 60) continue;
+                const creator = videoIdToCreator[vid];
+                if (!creator) continue;
+                const viewCount = parseInt(v.statistics?.viewCount || "0", 10);
+                const avgViews = creator.avgViews || 1;
+                const viralRatio = avgViews > 0 ? +(viewCount / avgViews).toFixed(2) : 0;
+                results.push({
                   videoId: vid,
-                  title: item.snippet.title,
-                  channelTitle: item.snippet.channelTitle,
-                  channelId: cid,
-                  thumbnailUrl: item.snippet.thumbnails?.high?.url || item.snippet.thumbnails?.medium?.url || item.snippet.thumbnails?.default?.url,
+                  title: v.snippet?.title || "Untitled",
+                  channelTitle: creator.name,
+                  channelId: creator.channelId,
+                  creatorHandle: creator.handle,
+                  thumbnailUrl: `https://i.ytimg.com/vi/${vid}/hqdefault.jpg`,
                   viewCount,
-                  channelAvgViews,
+                  channelAvgViews: avgViews,
                   viralRatio,
-                };
-              });
+                });
+              }
 
-              // Sort by viral ratio descending
               results.sort((a, b) => b.viralRatio - a.viralRatio);
 
               res.statusCode = 200;

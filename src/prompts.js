@@ -107,6 +107,34 @@ Return ONLY valid JSON — no markdown, no preamble:
   "recommended_approach": "string (either 'face_reaction' | 'action_moment' | 'visual_metaphor' | 'text_only')"
 }`
 
+export const CREATOR_SUGGESTION_PROMPT = (niche, title, transcript) => `
+You are a YouTube niche expert. Based on the video context below, suggest exactly 4 YouTube creators
+whose thumbnails would be valuable inspiration for creating a high-CTR thumbnail.
+
+Include:
+- 2 big established creators in this exact niche
+- 2 smaller creators who have had breakout viral videos in this niche
+
+VIDEO TITLE: "${title}"
+PRIMARY NICHE: ${niche.niche?.primary_category}
+SUBCATEGORY: ${niche.niche?.subcategory}
+TARGET AUDIENCE: ${niche.niche?.audience}
+EMOTIONAL HOOK: ${niche.emotional_hook?.type} — ${niche.emotional_hook?.description}
+THUMBNAIL CONCEPT: ${niche.thumbnail_strategy?.concept}
+TRANSCRIPT SNIPPET:
+${(transcript || "").slice(0, 2000)}
+
+IMPORTANT: Each creator MUST have an exact YouTube channel handle (e.g. @mrbeast) that
+can be looked up via the YouTube API. The handle is the part after the @ in the channel URL.
+
+Return ONLY valid JSON — no markdown, no preamble:
+{
+  "creators": [
+    { "handle": "@handle", "name": "Channel display name", "type": "successful", "reason": "one sentence why their thumbnails are relevant" },
+    { "handle": "@handle", "name": "Channel display name", "type": "underdog", "reason": "one sentence why their thumbnails are relevant" }
+  ]
+}`
+
 export const THUMBNAIL_CRITIQUE_PROMPT = (niche, transcript) => `
 You are a YouTube thumbnail design critic. Analyze the provided thumbnail image and the video context below.
 Rate it across multiple dimensions and give actionable feedback.

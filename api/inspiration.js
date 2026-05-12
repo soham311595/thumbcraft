@@ -8,101 +8,152 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: "YOUTUBE_API_KEY not configured" });
   }
 
-  const { niche = "", subcategory = "" } = req.query;
+  const { handles = "" } = req.query;
+  const creatorList = handles.split(",").map((s) => s.trim().replace(/^@/, "")).filter(Boolean);
+
+  if (creatorList.length === 0) {
+    return res.status(400).json({ error: "No creator handles provided" });
+  }
 
   try {
-    async function searchVideos(query) {
-      const r = await fetch(
-        `https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&maxResults=10&q=${encodeURIComponent(query)}&key=${apiKey}`
-      );
-      const raw = await r.text();
-      let data;
-      try { data = JSON.parse(raw); } catch { data = null; }
-      if (!r.ok || !data) return [];
-      return data.items || [];
+    // Phase 1: Look up each handle → channelId + stats
+    const channels = await Promise.all(
+      creatorList.map(async (handle) => {
+        const r = await fetch(
+          `https://www.googleapis.com/youtube/v3/channels?part=snippet,statistics&forHandle=${encodeURIComponent(handle)}&key=${apiKey}`
+        );
+        const raw = await r.text();
+        let data;
+        try { data = JSON.parse(raw); } catch { data = null; }
+        if (!r.ok || !data?.items?.length) {
+          // fallback: try without @ (some APIs strip it)
+          const r2 = await fetch(
+            `https://www.googleapis.com/youtube/v3/channels?part=snippet,statistics&forHandle=${encodeURIComponent(handle)}&key=${apiKey}`
+          );
+          const raw2 = await r2.text();
+          try { data = JSON.parse(raw2); } catch { data = null; }
+        }
+        if (!data?.items?.length) return null;
+        const ch = data.items[0];
+        return {
+          handle: `@${handle}`,
+          channelId: ch.id,
+          name: ch.snippet?.title || handle,
+          totalViews: parseInt(ch.statistics?.viewCount || "0", 10),
+          totalVideos: parseInt(ch.statistics?.videoCount || "1", 10),
+          avgViews: Math.round(
+            parseInt(ch.statistics?.viewCount || "0", 10) /
+            Math.max(parseInt(ch.statistics?.videoCount || "1", 10), 1)
+          ),
+        };
+      })
+    );
+
+    const validChannels = channels.filter(Boolean);
+    if (validChannels.length === 0) {
+      return res.status(200).json({ results: [], errors: ["No channels found for the given handles"] });
     }
 
-    const [broadItems, specificItems] = await Promise.all([
-      searchVideos(`${niche} channel`),
-      subcategory ? searchVideos(`${niche} ${subcategory} viral trending`) : Promise.resolve([]),
-    ]);
+    // Phase 2: Fetch RSS feeds for each channel
+    const rssResults = await Promise.all(
+      validChannels.map(async (ch) => {
+        try {
+          const r = await fetch(`https://www.youtube.com/feeds/videos.xml?channel_id=${ch.channelId}`);
+          const xml = await r.text();
 
-    // Merge and deduplicate by videoId
-    const seen = new Set();
-    const merged = [];
-    for (const item of [...broadItems, ...specificItems]) {
-      if (!seen.has(item.id.videoId)) {
-        seen.add(item.id.videoId);
-        merged.push(item);
+          const entries = [];
+          const entryRegex = /<entry>([\s\S]*?)<\/entry>/g;
+          let match;
+          while ((match = entryRegex.exec(xml)) !== null) {
+            const block = match[1];
+            const videoId = block.match(/<yt:videoId>([^<]+)<\/yt:videoId>/)?.[1];
+            const title = block.match(/<title>([^<]*)<\/title>/)?.[1]?.trim();
+            const thumbnailMatch = block.match(/<media:thumbnail[^>]*url="([^"]+)"/)?.[1];
+            if (videoId) {
+              entries.push({
+                videoId,
+                title: title || "Untitled",
+                thumbnailUrl: thumbnailMatch || `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
+              });
+            }
+          }
+          return { channel: ch, videos: entries };
+        } catch {
+          return { channel: ch, videos: [] };
+        }
+      })
+    );
+
+    // Collect all video IDs
+    const allVideos = [];
+    const videoIdToCreator = {};
+    for (const { channel, videos } of rssResults) {
+      for (const v of videos) {
+        allVideos.push(v.videoId);
+        videoIdToCreator[v.videoId] = { ...channel };
       }
     }
 
-    if (merged.length === 0) {
-      return res.status(200).json({ results: [] });
+    if (allVideos.length === 0) {
+      return res.status(200).json({ results: [], errors: ["No videos found in RSS feeds"] });
     }
 
-    const channelIds = [...new Set(merged.map((i) => i.snippet.channelId))];
-    const videoIds = merged.map((i) => i.id.videoId);
-
-    const [channelRaw, videoRaw] = await Promise.all([
-      fetch(`https://www.googleapis.com/youtube/v3/channels?part=statistics&id=${channelIds.join(",")}&key=${apiKey}`)
-        .then((r) => r.text()),
-      fetch(`https://www.googleapis.com/youtube/v3/videos?part=statistics,contentDetails&id=${videoIds.join(",")}&key=${apiKey}`)
-        .then((r) => r.text()),
-    ]);
-
-    let channelData, videoData;
-    try { channelData = JSON.parse(channelRaw); } catch { channelData = { items: [] }; }
+    // Phase 3: Get video stats + durations in one batch
+    const videoRes = await fetch(
+      `https://www.googleapis.com/youtube/v3/videos?part=statistics,contentDetails&id=${allVideos.join(",")}&key=${apiKey}`
+    );
+    const videoRaw = await videoRes.text();
+    let videoData;
     try { videoData = JSON.parse(videoRaw); } catch { videoData = { items: [] }; }
-
-    const channelStatsMap = {};
-    for (const ch of channelData.items || []) {
-      channelStatsMap[ch.id] = Math.round(
-        parseInt(ch.statistics.viewCount || "0", 10) /
-        Math.max(parseInt(ch.statistics.videoCount || "1", 10), 1)
-      );
-    }
 
     function parseDuration(iso) {
       const m = iso.match(/PT(?:(\d+)M)?(?:(\d+)S)?/);
       return (parseInt(m?.[1] || "0", 10) * 60) + parseInt(m?.[2] || "0", 10);
     }
 
-    const longVideos = (videoData.items || []).filter(
-      (v) => parseDuration(v.contentDetails.duration) >= 60
-    );
-    const longVideoIds = new Set(longVideos.map((v) => v.id));
-    const filteredItems = merged.filter((i) => longVideoIds.has(i.id.videoId));
-    if (filteredItems.length === 0) {
-      return res.status(200).json({ results: [] });
-    }
+    const results = [];
+    const seen = new Set();
 
-    const videoStats = {};
-    for (const v of longVideos) {
-      videoStats[v.id] = parseInt(v.statistics.viewCount || "0", 10);
-    }
+    for (const v of videoData.items || []) {
+      const vid = v.id;
+      if (seen.has(vid)) continue;
+      seen.add(vid);
 
-    const results = filteredItems.map((item) => {
-      const vid = item.id.videoId;
-      const cid = item.snippet.channelId;
-      const viewCount = videoStats[vid] || 0;
-      const channelAvgViews = channelStatsMap[cid] || 1;
-      const viralRatio = channelAvgViews > 0 ? +(viewCount / channelAvgViews).toFixed(2) : 0;
+      const dur = parseDuration(v.contentDetails?.duration || "PT0S");
+      if (dur < 60) continue; // filter shorts
 
-      return {
+      const creator = videoIdToCreator[vid];
+      if (!creator) continue;
+
+      const viewCount = parseInt(v.statistics?.viewCount || "0", 10);
+      const avgViews = creator.avgViews || 1;
+      const viralRatio = avgViews > 0 ? +(viewCount / avgViews).toFixed(2) : 0;
+
+      results.push({
         videoId: vid,
-        title: item.snippet.title,
-        channelTitle: item.snippet.channelTitle,
-        channelId: cid,
-        thumbnailUrl: item.snippet.thumbnails?.high?.url || item.snippet.thumbnails?.medium?.url || item.snippet.thumbnails?.default?.url,
+        title: allVideos.find((id) => id === vid) ? (v.snippet?.title || "Untitled") : "Untitled",
+        channelTitle: creator.name,
+        channelId: creator.channelId,
+        creatorHandle: creator.handle,
+        thumbnailUrl: `https://i.ytimg.com/vi/${vid}/hqdefault.jpg`,
         viewCount,
-        channelAvgViews,
+        channelAvgViews: avgViews,
         viralRatio,
-      };
-    });
+      });
+    }
 
     results.sort((a, b) => b.viralRatio - a.viralRatio);
-    return res.status(200).json({ results });
+
+    return res.status(200).json({
+      results,
+      channels: validChannels.map((c) => ({
+        handle: c.handle,
+        name: c.name,
+        avgViews: c.avgViews,
+        totalViews: c.totalViews,
+        totalVideos: c.totalVideos,
+      })),
+    });
   } catch (error) {
     return res.status(500).json({ error: error.message });
   }

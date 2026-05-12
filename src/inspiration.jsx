@@ -1,5 +1,7 @@
-import { useState, useEffect } from "react"
-import { Loader2, AlertCircle, Flame } from "lucide-react"
+import { useState, useEffect, useRef } from "react"
+import { Loader2, AlertCircle, Flame, Star, Zap } from "lucide-react"
+import { analyzeText } from "./ai"
+import { CREATOR_SUGGESTION_PROMPT } from "./prompts"
 
 function formatCount(n) {
   if (n >= 1e6) return (n / 1e6).toFixed(1) + "M"
@@ -13,58 +15,118 @@ function viralBadge(ratio) {
   return { label: "AVERAGE", color: "rgba(255,255,255,0.3)" }
 }
 
-export default function Inspiration({ niche, theme, onSelect }) {
+export default function Inspiration({ niche, transcript, videoTitle, theme, onSelect }) {
   const cardStyle = { background: theme.cardBg, border: `1px solid ${theme.cardBorder}`, borderRadius: 14, padding: 20 }
+  const [phase, setPhase] = useState("suggesting") // suggesting | fetching | done | error
+  const [creators, setCreators] = useState([])
   const [results, setResults] = useState([])
-  const [loading, setLoading] = useState(true)
   const [error, setError] = useState("")
   const [selected, setSelected] = useState(null)
+  const [creatorTypeMap, setCreatorTypeMap] = useState({})
+  const mountedRef = useRef(true)
+
+  useEffect(() => {
+    return () => { mountedRef.current = false }
+  }, [])
 
   useEffect(() => {
     if (!niche) return
-    setLoading(true)
+    setPhase("suggesting")
     setError("")
-    const params = new URLSearchParams({
-      niche: niche.niche?.primary_category || "",
-      subcategory: niche.niche?.subcategory || "",
-    })
-    fetch(`/api/inspiration?${params}`)
-      .then(async (r) => {
-        const text = await r.text()
+
+    const run = async () => {
+      try {
+        const formatted = transcript ? (Array.isArray(transcript) ? transcript.map(s => s.text).join(" ").slice(0, 2000) : String(transcript).slice(0, 2000)) : ""
+        const result = await analyzeText(
+          CREATOR_SUGGESTION_PROMPT(niche, videoTitle || "Unknown", formatted),
+          null,
+          { reasoning: false }
+        )
+        if (!mountedRef.current) return
+
+        const creatorList = result?.creators || []
+        if (creatorList.length === 0) throw new Error("Could not identify relevant creators")
+
+        setCreators(creatorList)
+
+        const typeMap = {}
+        for (const c of creatorList) {
+          typeMap[c.handle] = c.type
+        }
+        setCreatorTypeMap(typeMap)
+
+        setPhase("fetching")
+
+        const handles = creatorList.map(c => c.handle).join(",")
+        const params = new URLSearchParams({ handles })
+        const res = await fetch(`/api/inspiration?${params}`)
+        const text = await res.text()
         let data
         try { data = JSON.parse(text) } catch { data = { error: text.slice(0, 300) } }
         if (data.error) throw new Error(data.error)
-        return data
-      })
-      .then((data) => {
+        if (!mountedRef.current) return
+
         setResults(data.results || [])
-        if (data.results?.length === 0) setError("No results found — try a different niche")
-      })
-      .catch((e) => setError(e.message))
-      .finally(() => setLoading(false))
-  }, [niche])
+        if (data.results?.length === 0) setError("No long-form videos found from these creators")
+        setPhase("done")
+      } catch (e) {
+        if (mountedRef.current) {
+          setError(e.message)
+          setPhase("error")
+        }
+      }
+    }
+    run()
+  }, [niche, transcript, videoTitle])
 
   const handleSelect = (item) => {
     setSelected(item.videoId)
     onSelect(item)
   }
 
-  if (loading) {
+  if (phase === "suggesting") {
     return (
       <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "60px 20px", gap: 16 }}>
         <Loader2 size={32} className="spinner" style={{ color: "#b5179e" }} />
         <p style={{ fontSize: 14, color: theme.textSecondary, fontFamily: "'Space Mono', monospace" }}>
-          Searching for inspiration thumbnails...
+          Analyzing niche to find relevant creators...
         </p>
       </div>
     )
   }
 
-  if (error) {
+  if (phase === "fetching") {
     return (
-      <div style={{ display: "flex", alignItems: "center", gap: 8, background: theme.errorBg, border: `1px solid ${theme.errorBorder}`, borderRadius: 10, padding: "10px 16px", fontSize: 13, color: "#f72585" }}>
-        <AlertCircle size={14} />
-        {error}
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "60px 20px", gap: 12 }}>
+        <Loader2 size={32} className="spinner" style={{ color: "#b5179e" }} />
+        <p style={{ fontSize: 14, color: theme.textSecondary, fontFamily: "'Space Mono', monospace" }}>
+          Fetching thumbnails from {creators.length} channels...
+        </p>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "center" }}>
+          {creators.map((c) => (
+            <span key={c.handle} style={{
+              fontSize: 11, color: c.type === "successful" ? theme.textBright : theme.textMuted,
+              background: c.type === "successful" ? "rgba(247,37,133,0.1)" : "rgba(255,255,255,0.04)",
+              padding: "3px 10px", borderRadius: 20, fontFamily: "'Space Mono', monospace",
+            }}>
+              {c.name}
+            </span>
+          ))}
+        </div>
+      </div>
+    )
+  }
+
+  if (phase === "error") {
+    return (
+      <div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, background: theme.errorBg, border: `1px solid ${theme.errorBorder}`, borderRadius: 10, padding: "10px 16px", fontSize: 13, color: "#f72585", marginBottom: 16 }}>
+          <AlertCircle size={14} />
+          {error}
+        </div>
+        <p style={{ fontSize: 12, color: theme.textMuted, textAlign: "center" }}>
+          Try going back and analyzing a different video
+        </p>
       </div>
     )
   }
@@ -76,15 +138,44 @@ export default function Inspiration({ niche, theme, onSelect }) {
           Inspiration Thumbnails
         </h2>
         <p style={{ fontSize: 12, color: theme.textMuted, margin: 0 }}>
-          Real YouTube thumbnails sorted by viral ratio (views ÷ channel avg). Pick one as a style reference.
+          Thumbnails from creators in your niche, sorted by viral ratio. Pick one as a style reference.
         </p>
       </div>
+
+      {/* Creator legend */}
+      <div style={{ display: "flex", gap: 16, flexWrap: "wrap", marginBottom: 20 }}>
+        {creators.map((c) => (
+          <div key={c.handle} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            {c.type === "successful" ? (
+              <Star size={12} style={{ color: "#f72585" }} />
+            ) : (
+              <Zap size={12} style={{ color: "#eab308" }} />
+            )}
+            <span style={{ fontSize: 12, color: theme.textPrimary, fontWeight: 600 }}>{c.name}</span>
+            <span style={{
+              fontSize: 9, padding: "1px 6px", borderRadius: 8,
+              background: c.type === "successful" ? "rgba(247,37,133,0.12)" : "rgba(234,179,8,0.12)",
+              color: c.type === "successful" ? "#f72585" : "#eab308",
+              fontWeight: 700, fontFamily: "'Space Mono', monospace",
+            }}>
+              {c.type === "successful" ? "TOP" : "UNDERDOG"}
+            </span>
+          </div>
+        ))}
+      </div>
+
+      {results.length === 0 && !error && (
+        <p style={{ fontSize: 13, color: theme.textMuted, textAlign: "center" }}>
+          No videos found from these creators
+        </p>
+      )}
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: 16 }}>
         {results.map((item) => {
           const badge = viralBadge(item.viralRatio)
           const isSelected = selected === item.videoId
           const isAnythingSelected = selected !== null
+          const creatorType = creatorTypeMap[item.creatorHandle]
           return (
             <div
               key={item.videoId}
@@ -122,11 +213,22 @@ export default function Inspiration({ niche, theme, onSelect }) {
                     fontSize: 24, fontWeight: 700,
                   }}>✓</div>
                 )}
+                {/* Creator type badge on thumbnail */}
+                <div style={{
+                  position: "absolute", top: 6, left: 6,
+                  display: "flex", alignItems: "center", gap: 3,
+                  background: creatorType === "successful" ? "rgba(247,37,133,0.85)" : "rgba(234,179,8,0.85)",
+                  color: "#fff", borderRadius: 6, padding: "2px 7px",
+                  fontSize: 9, fontWeight: 700, fontFamily: "'Space Mono', monospace",
+                }}>
+                  {creatorType === "successful" ? <Star size={9} /> : <Zap size={9} />}
+                  {creatorType === "successful" ? "TOP" : "UNDERDOG"}
+                </div>
               </div>
-              <div style={{ fontSize: 12, fontWeight: 600, color: theme.textPrimary, marginBottom: 4, lineHeight: 1.3, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
+              <div style={{ fontSize: 12, fontWeight: 600, color: theme.textPrimary, marginBottom: 2, lineHeight: 1.3, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
                 {item.title}
               </div>
-              <div style={{ fontSize: 11, color: theme.textMuted, marginBottom: 8 }}>
+              <div style={{ fontSize: 11, color: theme.textBright, fontWeight: 600, marginBottom: 6 }}>
                 {item.channelTitle}
               </div>
               <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 11, fontFamily: "'Space Mono', monospace" }}>

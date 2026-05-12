@@ -111,10 +111,10 @@ export async function analyzeVision(imageUrls, textContent, systemPrompt) {
 // IMAGE GENERATION - Riverflow via OpenRouter
 // Returns base64 data URL - caller must upload to storage or use directly
 // ─────────────────────────────────────────────────────────
-export async function generateThumbnail(prompt, imageConfig, referenceImageUrl) {
+export async function generateThumbnail(prompt, imageConfig, referenceImages = []) {
   const body = { prompt };
-  if (referenceImageUrl) {
-    body.reference_image = referenceImageUrl;
+  if (referenceImages.length > 0) {
+    body.reference_images = referenceImages;
   }
 
   const res = await fetch("/api/generate-image", {

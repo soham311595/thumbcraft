@@ -1,12 +1,12 @@
 import { useState, useRef } from "react"
 import { analyzeText, generateThumbnail } from "./ai"
 import { fetchTranscript, formatTranscript, fetchVideoTitle } from "./transcript"
-import FramePicker from "./framepicker"
+import FrameGuide from "./frameGuide"
+import Inspiration from "./inspiration"
 
 import {
   NICHE_ANALYSIS_PROMPT,
   IMAGE_PROMPT_GENERATOR,
-  FRAME_RECOMMENDATION_PROMPT,
 } from "./prompts"
 import {
   ArrowLeft,
@@ -21,8 +21,8 @@ import { Toolbar } from "./components/Editor/Toolbar"
 import { LayersPanel } from "./components/Editor/LayersPanel"
 import { PropertiesPanel } from "./components/Editor/PropertiesPanel"
 
-const STEPS = ["input", "niche", "frames", "generate"]
-const STEP_LABELS = ["Video", "Niche", "Pick Frame", "Generate"]
+const STEPS = ["input", "niche", "inspiration", "frame", "generate"]
+const STEP_LABELS = ["Video", "Niche", "Inspire", "Frame", "Generate"]
 
 function extractVideoId(input) {
   const trimmed = input.trim()
@@ -134,15 +134,14 @@ export default function ThumbCraft() {
   const [videoThumbnail, setVideoThumbnail] = useState(null)
   const [nicheAnalysis, setNicheAnalysis] = useState(null)
 
-  // Step 2 — Frame Selection
-  const [frameRecs, setFrameRecs] = useState(null)
-  const [conceptIdeas, setConceptIdeas] = useState([])
-  const [framesLoading, setFramesLoading] = useState(false)
+  // Step 2 — Inspiration
+  const [selectedInspiration, setSelectedInspiration] = useState(null)
 
-  // Step 3 — Generate
+  // Step 3 — Frame Selection
   const [selectedFrameTimestamp, setSelectedFrameTimestamp] = useState(null)
   const [selectedFrameDataUrl, setSelectedFrameDataUrl] = useState(null)
-  const [selectedConceptTitle, setSelectedConceptTitle] = useState(null)
+
+  // Step 4 — Generate
   const [generatedThumb, setGeneratedThumb] = useState(null)
   const [generating, setGenerating] = useState(false)
 
@@ -209,50 +208,19 @@ export default function ThumbCraft() {
     }
   }
 
-  // ─── Step 2: Open Frame Selection ───────────────────────
-  const openFrameSelection = async () => {
-    if (!nicheAnalysis || !transcript) return
-    setFramesLoading(true)
-    setError("")
-    setStatus("Analyzing transcript for frame recommendations...")
+  // ─── Step 2: Inspiration ─────────────────────────────────
+  const handleInspirationSelect = (inspiration) => {
+    setSelectedInspiration(inspiration)
     setStep(2)
-    setFrameRecs(null)
-    setConceptIdeas([])
-
-    try {
-      const frameResult = await analyzeText(
-        FRAME_RECOMMENDATION_PROMPT(transcript, nicheAnalysis),
-      )
-      setFrameRecs(frameResult.recommended_frames || [])
-      setConceptIdeas(frameResult.concept_ideas || [])
-    } catch (e) {
-      console.error("Frame analysis error:", e)
-      setError("Frame analysis failed: " + e.message)
-      setFrameRecs(null)
-    } finally {
-      setFramesLoading(false)
-      setStatus("")
-    }
   }
 
-  // ─── Select Frame from FramePicker ──────────────────────
+  // ─── Step 3: Frame Guide → Capture ──────────────────────
   const handleFrameCaptured = (dataUrl, timestamp) => {
     setSelectedFrameDataUrl(dataUrl)
     setSelectedFrameTimestamp(timestamp)
-    setSelectedConceptTitle(null)
-    setStep(3)
   }
 
-  // ─── Select Concept Idea ────────────────────────────────
-  const handleSelectConcept = (conceptIndex) => {
-    const concept = conceptIdeas[conceptIndex]
-    setSelectedConceptTitle(concept.title)
-    setSelectedFrameTimestamp(null)
-    setSelectedFrameDataUrl(null)
-    setStep(3)
-  }
-
-  // ─── Step 3: Generate ───────────────────────────────────
+  // ─── Step 4: Generate ───────────────────────────────────
   const generateWithSelection = async () => {
     if (!nicheAnalysis) return
     setGenerating(true)
@@ -260,15 +228,15 @@ export default function ThumbCraft() {
     setStatus("Generating thumbnail...")
 
     try {
-      let promptText
+      const refImages = []
+      if (selectedFrameDataUrl) refImages.push(selectedFrameDataUrl)
+      if (selectedInspiration?.thumbnailUrl) refImages.push(selectedInspiration.thumbnailUrl)
 
-      if (selectedFrameTimestamp != null && selectedFrameDataUrl) {
-        promptText = `Use this video frame as the visual starting point for a YouTube thumbnail. Keep the subject and composition of the frame but enhance it with bold colors, dramatic lighting, and text overlay. This MUST be a HIGH-CTR thumbnail that creates a curiosity gap — make viewers feel they NEED to click to find out what's inside.\n\n${IMAGE_PROMPT_GENERATOR(nicheAnalysis, null, 0)}`
-      } else {
-        promptText = `Create a YouTube thumbnail based on this concept (no video frame reference needed). This MUST be a HIGH-CTR thumbnail that creates a curiosity gap — make viewers feel they NEED to click to find out what's inside.\n\nCONCEPT: ${selectedConceptTitle || ""}\n\n${IMAGE_PROMPT_GENERATOR(nicheAnalysis, null, 0)}`
-      }
+      const promptText = selectedFrameTimestamp != null
+        ? `Use this video frame as the visual starting point for a YouTube thumbnail. Keep the subject and composition of the frame but enhance it with bold colors, dramatic lighting, and text overlay. This MUST be a HIGH-CTR thumbnail that creates a curiosity gap — make viewers feel they NEED to click to find out what's inside.\n\n${IMAGE_PROMPT_GENERATOR(nicheAnalysis, null, 0)}`
+        : `Create a YouTube thumbnail based on this concept (no video frame reference needed). This MUST be a HIGH-CTR thumbnail that creates a curiosity gap — make viewers feel they NEED to click to find out what's inside.\n\n${IMAGE_PROMPT_GENERATOR(nicheAnalysis, null, 0)}`
 
-      const result = await generateThumbnail(promptText, null, selectedFrameDataUrl || undefined)
+      const result = await generateThumbnail(promptText, null, refImages)
       setGeneratedThumb(result)
     } catch (e) {
       setError(e.message)
@@ -303,7 +271,8 @@ export default function ThumbCraft() {
       0: true,
       1: !!nicheAnalysis,
       2: !!nicheAnalysis,
-      3: generatedThumb != null,
+      3: !!selectedInspiration,
+      4: generatedThumb != null,
     }
     if (canGo[s]) setStep(s)
   }
@@ -591,108 +560,94 @@ export default function ThumbCraft() {
             </div>
           </div>
 
-          <button onClick={openFrameSelection} disabled={loading || framesLoading}
-            style={btn(!loading && !framesLoading)}>
-            {framesLoading ? <><Loader2 size={14} className="spinner" /> Analyzing frames...</> : <>Choose Frames →</>}
+          <button onClick={() => setStep(2)} disabled={loading}
+            style={btn(!loading)}>
+            Find Inspiration →
           </button>
         </div>
       )}
 
-      {/* ════ STEP 2: FRAME SELECTION ════ */}
-      {step === 2 && (
+      {/* ════ STEP 2: INSPIRATION ════ */}
+      {step === 2 && nicheAnalysis && (
         <div>
-          {framesLoading ? (
-            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "60px 20px", gap: 16 }}>
-              <Loader2 size={32} className="spinner" style={{ color: "#b5179e" }} />
-              <p style={{ fontSize: 14, color: "rgba(255,255,255,0.5)", fontFamily: "'Space Mono', monospace" }}>
-                Analyzing transcript for frame recommendations...
-              </p>
-            </div>
-          ) : (
-            <div>
-              <div style={{ marginBottom: 22 }}>
-                <h2 style={{ fontSize: 16, fontWeight: 700, color: "#fff", margin: "0 0 4px" }}>
-                  Capture a Frame
-                </h2>
-                <p style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", margin: 0 }}>
-                  Browse your video frame by frame. Press <kbd style={kbdStyle}>C</kbd> to capture, click a frame to use it.
-                  {frameRecs?.length > 0 && " Pink dots on the timeline mark AI-recommended moments."}
-                </p>
-              </div>
+          <Inspiration
+            niche={nicheAnalysis}
+            onSelect={handleInspirationSelect}
+          />
 
-              {videoFile && (
-                <FramePicker
-                  videoFile={videoFile}
-                  recommendedTimestamps={frameRecs?.map((r) => r.timestamp) || []}
-                  onSelectFrame={handleFrameCaptured}
-                />
-              )}
-
-              {conceptIdeas.length > 0 && (
-                <div style={{ marginTop: 32 }}>
-                  <div style={{ marginBottom: 16 }}>
-                    <h2 style={{ fontSize: 16, fontWeight: 700, color: "#fff", margin: "0 0 4px" }}>
-                      Concept Ideas (No Reference Frame)
-                    </h2>
-                    <p style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", margin: 0 }}>
-                      Text-only concepts that work without a specific video frame
-                    </p>
-                  </div>
-
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: 16, marginBottom: 24 }}>
-                    {conceptIdeas.map((concept, i) => (
-                      <div key={`c-${i}`} style={{ ...cardStyle, borderColor: "rgba(114,9,183,0.2)", background: "rgba(114,9,183,0.04)" }}>
-                        <div style={{ fontSize: 15, fontWeight: 700, color: "#a78bfa", marginBottom: 6 }}>
-                          💡 {concept.title}
-                        </div>
-                        <div style={{ fontSize: 13, color: "rgba(255,255,255,0.65)", lineHeight: 1.6, marginBottom: 10 }}>
-                          {concept.description}
-                        </div>
-                        <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", marginBottom: 14, lineHeight: 1.5 }}>
-                          {concept.reason}
-                        </div>
-                        <button onClick={() => handleSelectConcept(i)}
-                          style={{
-                            ...btn(true), width: "100%", justifyContent: "center",
-                            background: "linear-gradient(135deg, #7209b7, #b5179e)",
-                          }}>
-                          <Sparkles size={14} /> Generate from Concept
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
+          {selectedInspiration && (
+            <div style={{ marginTop: 24 }}>
+              <button onClick={() => setStep(3)} style={btn(true)}>
+                Continue with Selected Inspiration →
+              </button>
             </div>
           )}
         </div>
       )}
 
-      {/* ════ STEP 3: GENERATE ════ */}
+      {/* ════ STEP 3: FRAME GUIDE ════ */}
       {step === 3 && (
+        <div>
+          <FrameGuide
+            videoFile={videoFile}
+            transcript={transcript}
+            niche={nicheAnalysis}
+            selectedInspiration={selectedInspiration}
+            onSelectFrame={handleFrameCaptured}
+          />
+
+          {selectedFrameDataUrl && (
+            <div style={{ marginTop: 24 }}>
+              <button onClick={() => setStep(4)} style={btn(true)}>
+                Generate with Selected Frame →
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ════ STEP 4: GENERATE ════ */}
+      {step === 4 && (
         <div>
           {!generatedThumb ? (
             <div>
               <div style={{ marginBottom: 22 }}>
                 <h2 style={{ fontSize: 16, fontWeight: 700, color: "#fff", margin: "0 0 4px" }}>
-                  {selectedFrameTimestamp != null ? "Generate with This Frame" : "Generate from Concept"}
+                  Generate Thumbnail
                 </h2>
                 <p style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", margin: 0 }}>
                   {selectedFrameTimestamp != null
-                    ? `Using frame at ${formatTimestamp(selectedFrameTimestamp)} as reference`
-                    : `Using concept: ${selectedConceptTitle}`
+                    ? `Using frame at ${formatTimestamp(selectedFrameTimestamp)} + inspiration thumbnail`
+                    : `Using inspiration thumbnail only`
                   }
                 </p>
               </div>
 
               <div style={{ display: "flex", gap: 16, flexWrap: "wrap", marginBottom: 24, alignItems: "flex-start" }}>
                 {selectedFrameDataUrl && (
-                  <div style={{ width: 280, flexShrink: 0 }}>
-                    <div style={{ borderRadius: 12, overflow: "hidden", border: "2px solid #f72585" }}>
+                  <div style={{ width: 240, flexShrink: 0 }}>
+                    <div style={{ fontSize: 10, fontWeight: 700, color: "rgba(255,255,255,0.3)", marginBottom: 4, fontFamily: "'Space Mono', monospace" }}>
+                      CAPTURED FRAME
+                    </div>
+                    <div style={{ borderRadius: 10, overflow: "hidden", border: "2px solid #f72585" }}>
                       <img src={selectedFrameDataUrl} alt="Selected frame" style={{ width: "100%", display: "block" }} />
                     </div>
-                    <div style={{ marginTop: 6, textAlign: "center", fontSize: 11, color: "rgba(255,255,255,0.4)", fontFamily: "'Space Mono', monospace" }}>
-                      Reference frame at {formatTimestamp(selectedFrameTimestamp)}
+                    <div style={{ marginTop: 4, textAlign: "center", fontSize: 10, color: "rgba(255,255,255,0.3)", fontFamily: "'Space Mono', monospace" }}>
+                      {formatTimestamp(selectedFrameTimestamp)}
+                    </div>
+                  </div>
+                )}
+
+                {selectedInspiration && (
+                  <div style={{ width: 240, flexShrink: 0 }}>
+                    <div style={{ fontSize: 10, fontWeight: 700, color: "rgba(255,255,255,0.3)", marginBottom: 4, fontFamily: "'Space Mono', monospace" }}>
+                      INSPIRATION
+                    </div>
+                    <div style={{ borderRadius: 10, overflow: "hidden", border: "2px solid #7209b7" }}>
+                      <img src={selectedInspiration.thumbnailUrl} alt="" style={{ width: "100%", display: "block" }} />
+                    </div>
+                    <div style={{ marginTop: 4, textAlign: "center", fontSize: 10, color: "rgba(255,255,255,0.3)", fontFamily: "'Space Mono', monospace" }}>
+                      {selectedInspiration.viralRatio}x viral
                     </div>
                   </div>
                 )}
@@ -719,7 +674,7 @@ export default function ThumbCraft() {
                   style={btn(!generating)}>
                   {generating ? <><Loader2 size={14} className="spinner" /> Generating...</> : <><Sparkles size={14} /> Generate Thumbnail →</>}
                 </button>
-                <button onClick={() => setStep(2)}
+                <button onClick={() => setStep(3)}
                   style={{
                     background: "transparent", border: "1px solid rgba(255,255,255,0.12)",
                     color: "rgba(255,255,255,0.5)", borderRadius: 12,
@@ -738,8 +693,8 @@ export default function ThumbCraft() {
                 </h2>
                 <p style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", margin: 0 }}>
                   {selectedFrameTimestamp != null
-                    ? `Generated using frame at ${formatTimestamp(selectedFrameTimestamp)}`
-                    : `Generated from concept: ${selectedConceptTitle}`
+                    ? `Generated using frame at ${formatTimestamp(selectedFrameTimestamp)} + inspiration`
+                    : `Generated with inspiration reference`
                   }
                 </p>
               </div>
@@ -781,7 +736,7 @@ export default function ThumbCraft() {
                   style={{ ...btn(!generating), background: "rgba(255,255,255,0.05)", color: generating ? "rgba(255,255,255,0.3)" : "rgba(255,255,255,0.7)" }}>
                   {generating ? <><Loader2 size={14} className="spinner" /> Regenerating...</> : <><RefreshCw size={14} /> Regenerate</>}
                 </button>
-                <button onClick={() => setStep(2)}
+                <button onClick={() => setStep(3)}
                   style={{
                     background: "transparent", border: "1px solid rgba(255,255,255,0.12)",
                     color: "rgba(255,255,255,0.5)", borderRadius: 12,
@@ -819,10 +774,4 @@ function Tag({ children }) {
       {children}
     </span>
   )
-}
-
-const kbdStyle = {
-  background: "rgba(255,255,255,0.08)", borderRadius: 4,
-  padding: "1px 6px", fontSize: 11, fontFamily: "'Space Mono', monospace",
-  color: "#fff", border: "1px solid rgba(255,255,255,0.15)",
 }

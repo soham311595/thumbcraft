@@ -88,6 +88,25 @@ RULES:
 - Prefer frames with faces for emotional reactions, or frames with dramatic visual changes
 - If the video has no faces, focus on visual metaphors or text-heavy concepts`
 
+export const FRAME_GUIDANCE_PROMPT = (transcript, niche, inspirationTitle) => `
+You are a YouTube thumbnail frame selection expert. Given the video transcript, niche analysis, and an inspiration thumbnail, provide specific, actionable advice for selecting the perfect video frame to use as a base for the generated thumbnail.
+
+INSPIRATION THUMBNAIL TITLE: "${inspirationTitle}"
+
+TRANSCRIPT:
+${transcript}
+
+NICHE ANALYSIS:
+${JSON.stringify(niche)}
+
+Return ONLY valid JSON — no markdown, no preamble:
+{
+  "composition_advice": "string (specific advice on what to look for in a video frame — subject placement, expressions, lighting, background elements, hand gestures, dramatic moments that would work well as a thumbnail base)",
+  "frame_characteristics": ["string", "string", "string"] (3-5 bullet points of specific frame characteristics to look for — e.g., 'wide-eyed reaction', 'before/after transition moment', 'hands pointing at something', 'product being held up')",
+  "inspiration_alignment": "string (how the selected inspiration thumbnail style should influence the frame choice — what visual techniques from the inspiration could be replicated with the right frame)",
+  "recommended_approach": "string (either 'face_reaction' | 'action_moment' | 'visual_metaphor' | 'text_only')"
+}`
+
 export const IMAGE_PROMPT_GENERATOR = (niche, style, variationIndex) => {
   const angles = [
     `Create a HIGH-CTR YouTube thumbnail INSPIRED BY but VISUALLY DISTINCT from typical ${niche.niche?.subcategory} thumbnails. Design for a curiosity gap — viewers feel compelled to click.`,

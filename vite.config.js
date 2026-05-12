@@ -105,7 +105,7 @@ export default defineConfig({
 
             try {
               const parsed = JSON.parse(body);
-              const { prompt, reference_image } = parsed;
+              const { prompt, reference_images } = parsed;
 
               if (!prompt) {
                 res.statusCode = 400;
@@ -114,12 +114,15 @@ export default defineConfig({
                 return;
               }
 
-              const messageContent = reference_image
-                ? [
-                    { type: "text", text: prompt },
-                    { type: "image_url", image_url: { url: reference_image } },
-                  ]
-                : prompt;
+              let messageContent;
+              if (reference_images && reference_images.length > 0) {
+                messageContent = [
+                  { type: "text", text: prompt },
+                  ...reference_images.map((url) => ({ type: "image_url", image_url: { url } })),
+                ];
+              } else {
+                messageContent = prompt;
+              }
 
               const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
                 method: "POST",
@@ -164,6 +167,119 @@ export default defineConfig({
                 dataUrl: images[0].image_url.url,
                 prompt,
               }));
+            } catch (error) {
+              res.statusCode = 500;
+              res.setHeader("Content-Type", "application/json");
+              res.end(JSON.stringify({ error: error.message }));
+            }
+            return;
+          }
+
+          if (url.pathname === "/api/inspiration") {
+            if (req.method !== "GET") {
+              res.statusCode = 405;
+              res.setHeader("Content-Type", "application/json");
+              res.end(JSON.stringify({ error: "Method not allowed" }));
+              return;
+            }
+
+            const apiKey = process.env.YOUTUBE_API_KEY;
+            if (!apiKey) {
+              res.statusCode = 500;
+              res.setHeader("Content-Type", "application/json");
+              res.end(JSON.stringify({ error: "YOUTUBE_API_KEY not configured" }));
+              return;
+            }
+
+            const niche = url.searchParams.get("niche") || "";
+            const subcategory = url.searchParams.get("subcategory") || "";
+
+            try {
+              const query = encodeURIComponent(`best thumbnails ${niche} ${subcategory} channel`);
+              const searchRes = await fetch(
+                `https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&maxResults=10&q=${query}&key=${apiKey}`
+              );
+              if (!searchRes.ok) {
+                const err = await searchRes.json();
+                res.statusCode = searchRes.status;
+                res.setHeader("Content-Type", "application/json");
+                res.end(JSON.stringify({ error: err.error?.message || "YouTube search failed" }));
+                return;
+              }
+              const searchData = await searchRes.json();
+
+              const items = searchData.items || [];
+              if (items.length === 0) {
+                res.statusCode = 200;
+                res.setHeader("Content-Type", "application/json");
+                res.end(JSON.stringify({ results: [] }));
+                return;
+              }
+
+              // Collect channel IDs and video IDs
+              const channelIds = [...new Set(items.map((i) => i.snippet.channelId))];
+              const videoIds = items.map((i) => i.id.videoId);
+
+              // Fetch channel statistics
+              const channelRes = await fetch(
+                `https://www.googleapis.com/youtube/v3/channels?part=statistics&id=${channelIds.join(",")}&key=${apiKey}`
+              );
+              const channelData = await channelRes.json();
+              const channelStats = {};
+              for (const ch of channelData.items || []) {
+                const subs = parseInt(ch.statistics.subscriberCount || "0", 10);
+                const views = parseInt(ch.statistics.viewCount || "0", 10);
+                channelStats[ch.id] = { subscriberCount: subs, totalViewCount: views };
+              }
+
+              // Fetch video statistics
+              const videoRes = await fetch(
+                `https://www.googleapis.com/youtube/v3/videos?part=statistics&id=${videoIds.join(",")}&key=${apiKey}`
+              );
+              const videoData = await videoRes.json();
+              const videoStats = {};
+              for (const v of videoData.items || []) {
+                videoStats[v.id] = parseInt(v.statistics.viewCount || "0", 10);
+              }
+
+              // Compute average views per channel
+              const channelVideoCounts = {};
+              const channelTotalViews = {};
+              for (const v of videoData.items || []) {
+                const cid = items.find((i) => i.id.videoId === v.id)?.snippet.channelId;
+                if (cid) {
+                  channelVideoCounts[cid] = (channelVideoCounts[cid] || 0) + 1;
+                  channelTotalViews[cid] = (channelTotalViews[cid] || 0) + parseInt(v.statistics.viewCount || "0", 10);
+                }
+              }
+
+              const results = items.map((item) => {
+                const vid = item.id.videoId;
+                const cid = item.snippet.channelId;
+                const viewCount = videoStats[vid] || 0;
+                const totalViews = channelTotalViews[cid] || 0;
+                const videoCount = channelVideoCounts[cid] || 1;
+                const channelAvgViews = Math.round(totalViews / videoCount);
+                const viralRatio = channelAvgViews > 0 ? +(viewCount / channelAvgViews).toFixed(2) : 0;
+
+                return {
+                  videoId: vid,
+                  title: item.snippet.title,
+                  channelTitle: item.snippet.channelTitle,
+                  channelId: cid,
+                  thumbnailUrl: item.snippet.thumbnails?.high?.url || item.snippet.thumbnails?.medium?.url || item.snippet.thumbnails?.default?.url,
+                  viewCount,
+                  channelAvgViews,
+                  viralRatio,
+                };
+              });
+
+              // Sort by viral ratio descending
+              results.sort((a, b) => b.viralRatio - a.viralRatio);
+
+              res.statusCode = 200;
+              res.setHeader("Content-Type", "application/json");
+              res.end(JSON.stringify({ results }));
             } catch (error) {
               res.statusCode = 500;
               res.setHeader("Content-Type", "application/json");

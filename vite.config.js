@@ -42,7 +42,9 @@ export default defineConfig({
                 body: JSON.stringify(parsed),
               });
 
-              const data = await response.json();
+              const raw = await response.text();
+              let data;
+              try { data = JSON.parse(raw); } catch { data = raw; }
               res.statusCode = response.status;
               res.setHeader("Content-Type", "application/json");
               res.end(JSON.stringify(data));
@@ -139,7 +141,9 @@ export default defineConfig({
                 }),
               });
 
-              const data = await response.json();
+              const raw = await response.text();
+              let data;
+              try { data = JSON.parse(raw); } catch { data = { error: raw }; }
 
               if (!response.ok) {
                 const detail = data.error?.metadata?.provider_name
@@ -148,7 +152,7 @@ export default defineConfig({
                 res.statusCode = response.status;
                 res.setHeader("Content-Type", "application/json");
                 res.end(JSON.stringify({
-                  error: `${data.error?.message || "Image generation failed"}${detail}`,
+                  error: `${data.error?.message || data.error || "Image generation failed"}${detail}`,
                 }));
                 return;
               }

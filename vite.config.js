@@ -261,29 +261,24 @@ export default defineConfig({
                 return;
               }
 
+              // Build channel stats map from real channel data (total views / total videos)
+              const channelStatsMap = {};
+              for (const ch of channelData.items || []) {
+                const totalViews = parseInt(ch.statistics.viewCount || "0", 10);
+                const videoCount = parseInt(ch.statistics.videoCount || "1", 10);
+                channelStatsMap[ch.id] = Math.round(totalViews / videoCount);
+              }
+
               const videoStats = {};
               for (const v of longVideos) {
                 videoStats[v.id] = parseInt(v.statistics.viewCount || "0", 10);
-              }
-
-              // Compute average views per channel
-              const channelVideoCounts = {};
-              const channelTotalViews = {};
-              for (const v of longVideos) {
-                const cid = filteredItems.find((i) => i.id.videoId === v.id)?.snippet.channelId;
-                if (cid) {
-                  channelVideoCounts[cid] = (channelVideoCounts[cid] || 0) + 1;
-                  channelTotalViews[cid] = (channelTotalViews[cid] || 0) + parseInt(v.statistics.viewCount || "0", 10);
-                }
               }
 
               const results = filteredItems.map((item) => {
                 const vid = item.id.videoId;
                 const cid = item.snippet.channelId;
                 const viewCount = videoStats[vid] || 0;
-                const totalViews = channelTotalViews[cid] || 0;
-                const videoCount = channelVideoCounts[cid] || 1;
-                const channelAvgViews = Math.round(totalViews / videoCount);
+                const channelAvgViews = channelStatsMap[cid] || 1;
                 const viralRatio = channelAvgViews > 0 ? +(viewCount / channelAvgViews).toFixed(2) : 0;
 
                 return {

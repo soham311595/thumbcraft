@@ -43,13 +43,21 @@ export default async function handler(req, res) {
     try { channelData = JSON.parse(channelRaw); } catch { channelData = { items: [] }; }
     try { videoData = JSON.parse(videoRaw); } catch { videoData = { items: [] }; }
 
+    // Build channel stats map from real channel data (total views / total videos)
+    const channelStatsMap = {};
+    for (const ch of channelData.items || []) {
+      const totalViews = parseInt(ch.statistics.viewCount || "0", 10);
+      const videoCount = parseInt(ch.statistics.videoCount || "1", 10);
+      channelStatsMap[ch.id] = Math.round(totalViews / videoCount);
+    }
+
     // Parse ISO 8601 duration (e.g. PT15S, PT5M30S) to seconds
     function parseDuration(iso) {
       const m = iso.match(/PT(?:(\d+)M)?(?:(\d+)S)?/);
       return (parseInt(m?.[1] || "0", 10) * 60) + parseInt(m?.[2] || "0", 10);
     }
 
-    // Filter out Shorts (< 60s) and build stats
+    // Filter out Shorts (< 60s)
     const longVideos = (videoData.items || []).filter(
       (v) => parseDuration(v.contentDetails.duration) >= 60
     );
@@ -65,23 +73,11 @@ export default async function handler(req, res) {
       videoStats[v.id] = parseInt(v.statistics.viewCount || "0", 10);
     }
 
-    const channelVideoCounts = {};
-    const channelTotalViews = {};
-    for (const v of longVideos) {
-      const cid = filteredItems.find((i) => i.id.videoId === v.id)?.snippet.channelId;
-      if (cid) {
-        channelVideoCounts[cid] = (channelVideoCounts[cid] || 0) + 1;
-        channelTotalViews[cid] = (channelTotalViews[cid] || 0) + parseInt(v.statistics.viewCount || "0", 10);
-      }
-    }
-
     const results = filteredItems.map((item) => {
       const vid = item.id.videoId;
       const cid = item.snippet.channelId;
       const viewCount = videoStats[vid] || 0;
-      const totalViews = channelTotalViews[cid] || 0;
-      const videoCount = channelVideoCounts[cid] || 1;
-      const channelAvgViews = Math.round(totalViews / videoCount);
+      const channelAvgViews = channelStatsMap[cid] || 1;
       const viralRatio = channelAvgViews > 0 ? +(viewCount / channelAvgViews).toFixed(2) : 0;
 
       return {

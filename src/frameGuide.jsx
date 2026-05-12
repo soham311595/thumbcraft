@@ -36,7 +36,7 @@ export default function FrameGuide({ videoFile, transcript, niche, selectedInspi
         const result = await analyzeText(
           FRAME_GUIDANCE_PROMPT(formatted, niche, selectedInspiration.title),
           null,
-          { raw: false },
+          { reasoning: false, raw: false },
         )
         if (mountedRef.current) {
           setGuidance(result)

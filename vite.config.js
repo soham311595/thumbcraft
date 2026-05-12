@@ -199,74 +199,76 @@ export default defineConfig({
             const subcategory = url.searchParams.get("subcategory") || "";
 
             try {
-              const query = encodeURIComponent(`${niche} channel`);
-              const searchRes = await fetch(
-                `https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&maxResults=10&q=${query}&key=${apiKey}`
-              );
-              const searchRaw = await searchRes.text();
-              let searchData;
-              try { searchData = JSON.parse(searchRaw); } catch { searchData = null; }
-              if (!searchRes.ok || !searchData) {
-                const msg = searchData?.error?.message || searchRaw?.slice(0, 200) || "YouTube search failed";
-                res.statusCode = searchRes.status;
-                res.setHeader("Content-Type", "application/json");
-                res.end(JSON.stringify({ error: msg }));
-                return;
+              async function searchVideos(q) {
+                const r = await fetch(
+                  `https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&maxResults=10&q=${encodeURIComponent(q)}&key=${apiKey}`
+                );
+                const raw = await r.text();
+                let data;
+                try { data = JSON.parse(raw); } catch { data = null; }
+                if (!r.ok || !data) return [];
+                return data.items || [];
               }
 
-              const items = searchData.items || [];
-              if (items.length === 0) {
+              const [broadItems, specificItems] = await Promise.all([
+                searchVideos(`${niche} channel`),
+                subcategory ? searchVideos(`${niche} ${subcategory} viral trending`) : Promise.resolve([]),
+              ]);
+
+              // Merge and deduplicate by videoId
+              const seen = new Set();
+              const merged = [];
+              for (const item of [...broadItems, ...specificItems]) {
+                if (!seen.has(item.id.videoId)) {
+                  seen.add(item.id.videoId);
+                  merged.push(item);
+                }
+              }
+
+              if (merged.length === 0) {
                 res.statusCode = 200;
                 res.setHeader("Content-Type", "application/json");
                 res.end(JSON.stringify({ results: [] }));
                 return;
               }
 
-              // Collect channel IDs and video IDs
-              const channelIds = [...new Set(items.map((i) => i.snippet.channelId))];
-              const videoIds = items.map((i) => i.id.videoId);
+              const channelIds = [...new Set(merged.map((i) => i.snippet.channelId))];
+              const videoIds = merged.map((i) => i.id.videoId);
 
-              // Fetch channel statistics
-              const channelRes = await fetch(
-                `https://www.googleapis.com/youtube/v3/channels?part=statistics&id=${channelIds.join(",")}&key=${apiKey}`
-              );
-              const channelRaw = await channelRes.text();
-              let channelData;
+              const [channelRaw, videoRaw] = await Promise.all([
+                fetch(`https://www.googleapis.com/youtube/v3/channels?part=statistics&id=${channelIds.join(",")}&key=${apiKey}`)
+                  .then((r) => r.text()),
+                fetch(`https://www.googleapis.com/youtube/v3/videos?part=statistics,contentDetails&id=${videoIds.join(",")}&key=${apiKey}`)
+                  .then((r) => r.text()),
+              ]);
+
+              let channelData, videoData;
               try { channelData = JSON.parse(channelRaw); } catch { channelData = { items: [] }; }
-
-              // Fetch video statistics + contentDetails (for duration)
-              const videoRes = await fetch(
-                `https://www.googleapis.com/youtube/v3/videos?part=statistics,contentDetails&id=${videoIds.join(",")}&key=${apiKey}`
-              );
-              const videoRaw = await videoRes.text();
-              let videoData;
               try { videoData = JSON.parse(videoRaw); } catch { videoData = { items: [] }; }
 
-              // Parse ISO 8601 duration (e.g. PT15S, PT5M30S) to seconds
+              const channelStatsMap = {};
+              for (const ch of channelData.items || []) {
+                channelStatsMap[ch.id] = Math.round(
+                  parseInt(ch.statistics.viewCount || "0", 10) /
+                  Math.max(parseInt(ch.statistics.videoCount || "1", 10), 1)
+                );
+              }
+
               function parseDuration(iso) {
                 const m = iso.match(/PT(?:(\d+)M)?(?:(\d+)S)?/);
                 return (parseInt(m?.[1] || "0", 10) * 60) + parseInt(m?.[2] || "0", 10);
               }
 
-              // Filter out Shorts (< 60s) and build stats
               const longVideos = (videoData.items || []).filter(
                 (v) => parseDuration(v.contentDetails.duration) >= 60
               );
               const longVideoIds = new Set(longVideos.map((v) => v.id));
-              const filteredItems = items.filter((i) => longVideoIds.has(i.id.videoId));
+              const filteredItems = merged.filter((i) => longVideoIds.has(i.id.videoId));
               if (filteredItems.length === 0) {
                 res.statusCode = 200;
                 res.setHeader("Content-Type", "application/json");
                 res.end(JSON.stringify({ results: [] }));
                 return;
-              }
-
-              // Build channel stats map from real channel data (total views / total videos)
-              const channelStatsMap = {};
-              for (const ch of channelData.items || []) {
-                const totalViews = parseInt(ch.statistics.viewCount || "0", 10);
-                const videoCount = parseInt(ch.statistics.videoCount || "1", 10);
-                channelStatsMap[ch.id] = Math.round(totalViews / videoCount);
               }
 
               const videoStats = {};

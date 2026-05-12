@@ -199,7 +199,7 @@ export default defineConfig({
             const subcategory = url.searchParams.get("subcategory") || "";
 
             try {
-              const query = encodeURIComponent(`best thumbnails ${niche} ${subcategory} channel`);
+              const query = encodeURIComponent(`${niche} ${subcategory} viral trending`);
               const searchRes = await fetch(
                 `https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&maxResults=10&q=${query}&key=${apiKey}`
               );

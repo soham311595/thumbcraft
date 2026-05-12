@@ -214,9 +214,7 @@ export default defineConfig({
                 return;
               }
 
-              const items = (searchData.items || []).filter(
-                (i) => !/#shorts/i.test(i.snippet.title)
-              );
+              const items = searchData.items || [];
               if (items.length === 0) {
                 res.statusCode = 200;
                 res.setHeader("Content-Type", "application/json");
@@ -236,30 +234,50 @@ export default defineConfig({
               let channelData;
               try { channelData = JSON.parse(channelRaw); } catch { channelData = { items: [] }; }
 
-              // Fetch video statistics
+              // Fetch video statistics + contentDetails (for duration)
               const videoRes = await fetch(
-                `https://www.googleapis.com/youtube/v3/videos?part=statistics&id=${videoIds.join(",")}&key=${apiKey}`
+                `https://www.googleapis.com/youtube/v3/videos?part=statistics,contentDetails&id=${videoIds.join(",")}&key=${apiKey}`
               );
               const videoRaw = await videoRes.text();
               let videoData;
               try { videoData = JSON.parse(videoRaw); } catch { videoData = { items: [] }; }
+
+              // Parse ISO 8601 duration (e.g. PT15S, PT5M30S) to seconds
+              function parseDuration(iso) {
+                const m = iso.match(/PT(?:(\d+)M)?(?:(\d+)S)?/);
+                return (parseInt(m?.[1] || "0", 10) * 60) + parseInt(m?.[2] || "0", 10);
+              }
+
+              // Filter out Shorts (< 60s) and build stats
+              const longVideos = (videoData.items || []).filter(
+                (v) => parseDuration(v.contentDetails.duration) >= 60
+              );
+              const longVideoIds = new Set(longVideos.map((v) => v.id));
+              const filteredItems = items.filter((i) => longVideoIds.has(i.id.videoId));
+              if (filteredItems.length === 0) {
+                res.statusCode = 200;
+                res.setHeader("Content-Type", "application/json");
+                res.end(JSON.stringify({ results: [] }));
+                return;
+              }
+
               const videoStats = {};
-              for (const v of videoData.items || []) {
+              for (const v of longVideos) {
                 videoStats[v.id] = parseInt(v.statistics.viewCount || "0", 10);
               }
 
               // Compute average views per channel
               const channelVideoCounts = {};
               const channelTotalViews = {};
-              for (const v of videoData.items || []) {
-                const cid = items.find((i) => i.id.videoId === v.id)?.snippet.channelId;
+              for (const v of longVideos) {
+                const cid = filteredItems.find((i) => i.id.videoId === v.id)?.snippet.channelId;
                 if (cid) {
                   channelVideoCounts[cid] = (channelVideoCounts[cid] || 0) + 1;
                   channelTotalViews[cid] = (channelTotalViews[cid] || 0) + parseInt(v.statistics.viewCount || "0", 10);
                 }
               }
 
-              const results = items.map((item) => {
+              const results = filteredItems.map((item) => {
                 const vid = item.id.videoId;
                 const cid = item.snippet.channelId;
                 const viewCount = videoStats[vid] || 0;

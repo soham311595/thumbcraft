@@ -24,7 +24,9 @@ export default async function handler(req, res) {
       return res.status(searchRes.status).json({ error: msg });
     }
 
-    const items = searchData.items || [];
+    const items = (searchData.items || []).filter(
+      (i) => !/#shorts/i.test(i.snippet.title)
+    );
     if (items.length === 0) {
       return res.status(200).json({ results: [] });
     }

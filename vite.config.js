@@ -214,7 +214,9 @@ export default defineConfig({
                 return;
               }
 
-              const items = searchData.items || [];
+              const items = (searchData.items || []).filter(
+                (i) => !/#shorts/i.test(i.snippet.title)
+              );
               if (items.length === 0) {
                 res.statusCode = 200;
                 res.setHeader("Content-Type", "application/json");

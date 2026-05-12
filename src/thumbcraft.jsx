@@ -192,19 +192,24 @@ export default function ThumbCraft() {
       const thumb = await fetchYtThumbnail(videoId)
       setVideoThumbnail(thumb)
 
-      setStatus("Fetching title...")
-      const title = await fetchVideoTitle(videoId)
+      setStatus("Fetching title and transcript...")
+      const abort = new AbortController()
+      const timeout = setTimeout(() => abort.abort(), 15000)
+      const [title, segments] = await Promise.all([
+        fetchVideoTitle(videoId, abort.signal),
+        fetchTranscript(videoId, abort.signal),
+      ]).finally(() => clearTimeout(timeout))
       setVideoTitle(title)
-
-      setStatus("Fetching transcript...")
-      const segments = await fetchTranscript(videoId)
-      const formatted = formatTranscript(segments, 12000)
       setTranscript(segments)
+
+      const formatted = formatTranscript(segments, 6000)
       setTranscriptText(formatted)
 
       setStatus("Analyzing niche...")
       const result = await analyzeText(
         NICHE_ANALYSIS_PROMPT(formatted, title || "Unknown"),
+        null,
+        { reasoning: false },
       )
       setNicheAnalysis(result)
       setStep(1)

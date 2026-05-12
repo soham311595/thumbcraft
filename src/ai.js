@@ -59,13 +59,17 @@ export async function analyzeText(prompt, systemPrompt, options = {}) {
       ]
     : [{ role: "user", content: prompt }];
 
-  const data = await orChat({
+  const body = {
     model: NEMOTRON_MODEL,
     messages,
-    reasoning: { enabled: true },
-  });
+  };
+  if (options.reasoning !== false) {
+    body.reasoning = { enabled: true };
+  }
 
-  const text = extractText(data);
+  const data = await orChat(body);
+
+  const text = options.reasoning !== false ? extractText(data) : (data?.choices?.[0]?.message?.content || "");
   if (options.raw) return text;
   const parsed = tryParse(text);
   if (!parsed) throw new Error("Nemotron response parse failed: " + text.slice(0, 300));

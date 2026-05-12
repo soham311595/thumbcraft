@@ -105,7 +105,7 @@ export default defineConfig({
 
             try {
               const parsed = JSON.parse(body);
-              const { prompt, reference_image } = parsed;
+              const { prompt, image_config, reference_image } = parsed;
 
               if (!prompt) {
                 res.statusCode = 400;
@@ -130,9 +130,13 @@ export default defineConfig({
                   "X-Title": "ThumbCraft",
                 },
                 body: JSON.stringify({
-                  model: "sourceful/riverflow-v2-fast",
+                  model: "google/gemini-3.1-flash-image-preview",
                   messages: [{ role: "user", content: messageContent }],
-                  modalities: ["image"],
+                  modalities: ["image", "text"],
+                  image_config: image_config || {
+                    aspect_ratio: "16:9",
+                    image_size: "2K",
+                  },
                 }),
               });
 
@@ -154,7 +158,7 @@ export default defineConfig({
               if (!images?.length) {
                 res.statusCode = 500;
                 res.setHeader("Content-Type", "application/json");
-                res.end(JSON.stringify({ error: "No image in model response" }));
+                res.end(JSON.stringify({ error: "No image in Gemini response" }));
                 return;
               }
 

@@ -107,6 +107,30 @@ Return ONLY valid JSON — no markdown, no preamble:
   "recommended_approach": "string (either 'face_reaction' | 'action_moment' | 'visual_metaphor' | 'text_only')"
 }`
 
+export const THUMBNAIL_CRITIQUE_PROMPT = (niche, transcript) => `
+You are a YouTube thumbnail design critic. Analyze the provided thumbnail image and the video context below.
+Rate it across multiple dimensions and give actionable feedback.
+
+NICHE: ${niche.niche?.primary_category} / ${niche.niche?.subcategory}
+AUDIENCE: ${niche.niche?.audience}
+EMOTIONAL HOOK: ${niche.emotional_hook?.type} — ${niche.emotional_hook?.description}
+TARGET TEXT OVERLAY: "${niche.thumbnail_strategy?.text_overlay ?? ''}"
+
+Return ONLY valid JSON — no markdown, no preamble:
+{
+  "overall_score": 0-100,
+  "categories": {
+    "composition": { "score": 0-100, "note": "string (one sentence)" },
+    "color_and_contrast": { "score": 0-100, "note": "string (one sentence)" },
+    "text_readability": { "score": 0-100, "note": "string (one sentence)" },
+    "emotional_appeal": { "score": 0-100, "note": "string (one sentence)" },
+    "ctr_potential": { "score": 0-100, "note": "string (one sentence)" }
+  },
+  "strengths": ["string", "string", "string"],
+  "weaknesses": ["string", "string", "string"],
+  "improvement_tips": ["string", "string", "string"]
+}`
+
 export const IMAGE_PROMPT_GENERATOR = (niche, style, variationIndex) => {
   const angles = [
     `Create a HIGH-CTR YouTube thumbnail INSPIRED BY but VISUALLY DISTINCT from typical ${niche.niche?.subcategory} thumbnails. Design for a curiosity gap — viewers feel compelled to click.`,

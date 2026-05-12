@@ -13,9 +13,8 @@ function viralBadge(ratio) {
   return { label: "AVERAGE", color: "rgba(255,255,255,0.3)" }
 }
 
-const cardStyle = { background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 14, padding: 20 }
-
-export default function Inspiration({ niche, onSelect }) {
+export default function Inspiration({ niche, theme, onSelect }) {
+  const cardStyle = { background: theme.cardBg, border: `1px solid ${theme.cardBorder}`, borderRadius: 14, padding: 20 }
   const [results, setResults] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState("")
@@ -54,7 +53,7 @@ export default function Inspiration({ niche, onSelect }) {
     return (
       <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "60px 20px", gap: 16 }}>
         <Loader2 size={32} className="spinner" style={{ color: "#b5179e" }} />
-        <p style={{ fontSize: 14, color: "rgba(255,255,255,0.5)", fontFamily: "'Space Mono', monospace" }}>
+        <p style={{ fontSize: 14, color: theme.textSecondary, fontFamily: "'Space Mono', monospace" }}>
           Searching for inspiration thumbnails...
         </p>
       </div>
@@ -63,7 +62,7 @@ export default function Inspiration({ niche, onSelect }) {
 
   if (error) {
     return (
-      <div style={{ display: "flex", alignItems: "center", gap: 8, background: "rgba(247,37,133,0.08)", border: "1px solid rgba(247,37,133,0.25)", borderRadius: 10, padding: "10px 16px", fontSize: 13, color: "#f72585" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, background: theme.errorBg, border: `1px solid ${theme.errorBorder}`, borderRadius: 10, padding: "10px 16px", fontSize: 13, color: "#f72585" }}>
         <AlertCircle size={14} />
         {error}
       </div>
@@ -73,10 +72,10 @@ export default function Inspiration({ niche, onSelect }) {
   return (
     <div>
       <div style={{ marginBottom: 22 }}>
-        <h2 style={{ fontSize: 16, fontWeight: 700, color: "#fff", margin: "0 0 4px" }}>
+        <h2 style={{ fontSize: 16, fontWeight: 700, color: theme.textPrimary, margin: "0 0 4px" }}>
           Inspiration Thumbnails
         </h2>
-        <p style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", margin: 0 }}>
+        <p style={{ fontSize: 12, color: theme.textMuted, margin: 0 }}>
           Real YouTube thumbnails sorted by viral ratio (views ÷ channel avg). Pick one as a style reference.
         </p>
       </div>
@@ -85,6 +84,7 @@ export default function Inspiration({ niche, onSelect }) {
         {results.map((item) => {
           const badge = viralBadge(item.viralRatio)
           const isSelected = selected === item.videoId
+          const isAnythingSelected = selected !== null
           return (
             <div
               key={item.videoId}
@@ -92,24 +92,45 @@ export default function Inspiration({ niche, onSelect }) {
               style={{
                 ...cardStyle,
                 cursor: "pointer",
-                border: isSelected ? "2px solid #f72585" : "1px solid rgba(255,255,255,0.08)",
+                border: isSelected ? "2px solid #f72585" : `1px solid ${theme.cardBorder}`,
                 transition: "all 0.2s",
                 position: "relative",
+                opacity: isAnythingSelected && !isSelected ? 0.4 : 1,
               }}
-              onMouseEnter={(e) => { if (!isSelected) e.currentTarget.style.borderColor = "rgba(247,37,133,0.4)" }}
-              onMouseLeave={(e) => { if (!isSelected) e.currentTarget.style.borderColor = "rgba(255,255,255,0.08)" }}
+              onMouseEnter={(e) => {
+                if (!isSelected) {
+                  e.currentTarget.style.borderColor = "rgba(247,37,133,0.4)"
+                  if (isAnythingSelected) e.currentTarget.style.opacity = "0.6"
+                }
+              }}
+              onMouseLeave={(e) => {
+                if (!isSelected) {
+                  e.currentTarget.style.borderColor = theme.cardBorder
+                  if (isAnythingSelected) e.currentTarget.style.opacity = "0.4"
+                }
+              }}
             >
-              <div style={{ borderRadius: 8, overflow: "hidden", marginBottom: 10, aspectRatio: "16/9", background: "#0a0a14" }}>
+              <div style={{ borderRadius: 8, overflow: "hidden", marginBottom: 10, aspectRatio: "16/9", background: "#0a0a14", position: "relative" }}>
                 <img src={item.thumbnailUrl} alt={item.title} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+                {isSelected && (
+                  <div style={{
+                    position: "absolute", top: "50%", left: "50%", transform: "translate(-50%, -50%)",
+                    width: 48, height: 48, borderRadius: "50%",
+                    background: "#22c55e", color: "#fff",
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    boxShadow: "0 4px 20px rgba(34,197,94,0.5)",
+                    fontSize: 24, fontWeight: 700,
+                  }}>✓</div>
+                )}
               </div>
-              <div style={{ fontSize: 12, fontWeight: 600, color: "#fff", marginBottom: 4, lineHeight: 1.3, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
+              <div style={{ fontSize: 12, fontWeight: 600, color: theme.textPrimary, marginBottom: 4, lineHeight: 1.3, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
                 {item.title}
               </div>
-              <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginBottom: 8 }}>
+              <div style={{ fontSize: 11, color: theme.textMuted, marginBottom: 8 }}>
                 {item.channelTitle}
               </div>
               <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 11, fontFamily: "'Space Mono', monospace" }}>
-                <span style={{ color: "rgba(255,255,255,0.5)" }}>{formatCount(item.viewCount)} views</span>
+                <span style={{ color: theme.textSecondary }}>{formatCount(item.viewCount)} views</span>
                 <span style={{
                   background: badge.color + "20",
                   color: badge.color,

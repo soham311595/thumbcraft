@@ -1,19 +1,24 @@
 import { useState } from "react"
-import { analyzeText, generateThumbnail } from "./ai"
+import { analyzeText, analyzeVision, generateThumbnail } from "./ai"
 import { fetchTranscript, formatTranscript, fetchVideoTitle } from "./transcript"
+import { useTheme } from "./theme"
 import FrameGuide from "./frameGuide"
 import Inspiration from "./inspiration"
+import ThumbnailCritique from "./thumbnailCritique"
 
 import {
   NICHE_ANALYSIS_PROMPT,
+  THUMBNAIL_CRITIQUE_PROMPT,
   IMAGE_PROMPT_GENERATOR,
 } from "./prompts"
 import {
   AlertCircle,
   Download,
   Loader2,
+  Moon,
   RefreshCw,
   Sparkles,
+  Sun,
   Upload,
 } from "lucide-react"
 
@@ -86,9 +91,9 @@ function Stepper({ step, onStep, steps, labels }) {
               ? "linear-gradient(135deg, #f72585, #7209b7)"
               : i < step
                 ? "rgba(114,9,183,0.3)"
-                : "rgba(255,255,255,0.05)",
+                : "var(--c-btn-bg)",
             border: "none",
-            color: i <= step ? "#fff" : "rgba(255,255,255,0.3)",
+            color: i <= step ? "#fff" : "var(--c-text-dim)",
             borderRadius: 20,
             padding: "6px 14px",
             fontSize: 12,
@@ -100,7 +105,7 @@ function Stepper({ step, onStep, steps, labels }) {
             {i + 1}. {labels[i]}
           </button>
           {i < steps.length - 1 && (
-            <div style={{ width: 16, height: 1, background: "rgba(255,255,255,0.08)" }} />
+            <div style={{ width: 16, height: 1, background: "var(--c-card-border)" }} />
           )}
         </div>
       ))}
@@ -109,6 +114,7 @@ function Stepper({ step, onStep, steps, labels }) {
 }
 
 export default function ThumbCraft() {
+  const { theme, themeName, toggleTheme } = useTheme()
   const [step, setStep] = useState(0)
 
   // YouTube URL
@@ -139,6 +145,9 @@ export default function ThumbCraft() {
   // Step 4 — Generate
   const [generatedThumb, setGeneratedThumb] = useState(null)
   const [generating, setGenerating] = useState(false)
+  const [critique, setCritique] = useState(null)
+  const [critiqueLoading, setCritiqueLoading] = useState(false)
+  const [critiqueError, setCritiqueError] = useState("")
 
   // ─── File handlers ──────────────────────────────────────
   const handleFileDrop = (e) => {
@@ -214,6 +223,8 @@ export default function ThumbCraft() {
     if (!nicheAnalysis) return
     setGenerating(true)
     setError("")
+    setCritique(null)
+    setCritiqueError("")
     setStatus("Generating thumbnail...")
 
     try {
@@ -227,10 +238,30 @@ export default function ThumbCraft() {
 
       const result = await generateThumbnail(promptText, null, refImages)
       setGeneratedThumb(result)
+      setStatus("Analyzing thumbnail...")
+      triggerCritique(result)
     } catch (e) {
       setError(e.message)
     } finally {
       setGenerating(false)
+      setStatus("")
+    }
+  }
+
+  const triggerCritique = async (thumb) => {
+    setCritiqueLoading(true)
+    setCritiqueError("")
+    try {
+      const imgUrl = thumb.url || thumb.dataUrl
+      if (!imgUrl) throw new Error("No image URL available")
+      const formatted = transcript ? formatTranscript(transcript, 4000) : ""
+      const prompt = THUMBNAIL_CRITIQUE_PROMPT(nicheAnalysis, formatted)
+      const result = await analyzeVision([imgUrl], prompt)
+      setCritique(result)
+    } catch (e) {
+      setCritiqueError(e.message)
+    } finally {
+      setCritiqueLoading(false)
       setStatus("")
     }
   }
@@ -247,13 +278,42 @@ export default function ThumbCraft() {
   }
 
   // ─── Render helpers ──────────────────────────────────────
-  const appBg = { minHeight: "100vh", background: "#08080f", color: "#e0e0ec", fontFamily: "'DM Sans', -apple-system, sans-serif", padding: "20px 24px" }
-  const cardStyle = { background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 14, padding: 20 }
-  const inputStyle = { width: "100%", boxSizing: "border-box", background: "rgba(0,0,0,0.3)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 10, padding: "10px 14px", color: "#fff", fontSize: 14, fontFamily: "'Space Mono', monospace", outline: "none" }
+  const vars = {
+    "--c-bg": theme.bg,
+    "--c-text": theme.text,
+    "--c-card-bg": theme.cardBg,
+    "--c-card-border": theme.cardBorder,
+    "--c-text-primary": theme.textPrimary,
+    "--c-text-secondary": theme.textSecondary,
+    "--c-text-muted": theme.textMuted,
+    "--c-text-dim": theme.textDim,
+    "--c-text-faint": theme.textFaint,
+    "--c-input-bg": theme.inputBg,
+    "--c-input-border": theme.inputBorder,
+    "--c-btn-bg": theme.btnBg,
+    "--c-btn-text": theme.btnText,
+    "--c-divider": theme.divider,
+    "--c-status-bg": theme.statusBg,
+    "--c-status-border": theme.statusBorder,
+    "--c-error-bg": theme.errorBg,
+    "--c-error-border": theme.errorBorder,
+    "--c-frame-preview": theme.framePreviewBg,
+    "--c-drop-zone": theme.dropZoneBorder,
+    "--c-caption-bar": theme.captionBar,
+    "--c-text-tertiary": theme.textTertiary,
+    "--c-text-bright": theme.textBright,
+    "--c-text-very-dim": theme.textVeryDim,
+    "--c-border-subtle": theme.borderSubtle,
+    "--c-stepper-completed": theme.stepperCompleted,
+    "--c-accent-hover": theme.accentHover,
+  }
+  const appBg = { minHeight: "100vh", background: theme.bg, color: theme.text, fontFamily: "'DM Sans', -apple-system, sans-serif", padding: "20px 24px" }
+  const cardStyle = { background: theme.cardBg, border: `1px solid ${theme.cardBorder}`, borderRadius: 14, padding: 20 }
+  const inputStyle = { width: "100%", boxSizing: "border-box", background: theme.inputBg, border: `1px solid ${theme.inputBorder}`, borderRadius: 10, padding: "10px 14px", color: theme.textPrimary, fontSize: 14, fontFamily: "'Space Mono', monospace", outline: "none" }
   const btn = (active) => ({
-    background: active ? "linear-gradient(135deg, #f72585, #7209b7)" : "rgba(255,255,255,0.05)",
+    background: active ? "linear-gradient(135deg, #f72585, #7209b7)" : theme.btnBg,
     border: "none",
-    color: active ? "#fff" : "rgba(255,255,255,0.3)",
+    color: active ? "#fff" : theme.btnText,
     borderRadius: 12,
     padding: "13px 28px",
     fontSize: 14,
@@ -268,7 +328,7 @@ export default function ThumbCraft() {
 
   // ─── WIZARD VIEW ─────────────────────────────────────────
   return (
-    <div style={appBg}>
+    <div style={{ ...appBg, ...vars }}>
       <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 6 }}>
         <div style={{
           width: 38, height: 38, borderRadius: 10,
@@ -280,23 +340,35 @@ export default function ThumbCraft() {
           <h1 style={{ margin: 0, fontSize: 21, fontWeight: 700, fontFamily: "'Space Mono', monospace", background: "linear-gradient(135deg, #f72585, #b5179e, #7209b7)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>
             ThumbCraft
           </h1>
-          <p style={{ margin: 0, fontSize: 11, color: "rgba(255,255,255,0.3)", fontFamily: "'Space Mono', monospace" }}>
+          <p style={{ margin: 0, fontSize: 11, color: "var(--c-text-dim)", fontFamily: "'Space Mono', monospace" }}>
             AI thumbnail generator — YouTube transcript + local frame capture
           </p>
+        </div>
+
+        <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8 }}>
+          <button onClick={toggleTheme} title={`Switch to ${themeName === "dark" ? "light" : "dark"} mode`}
+            style={{
+              background: "transparent", border: `1px solid ${theme.textDim}`,
+              color: theme.textMuted, borderRadius: 8, width: 34, height: 34,
+              display: "flex", alignItems: "center", justifyContent: "center",
+              cursor: "pointer", fontSize: 15, transition: "all 0.2s",
+            }}>
+            {themeName === "dark" ? <Sun size={15} /> : <Moon size={15} />}
+          </button>
         </div>
       </div>
 
       <Stepper step={step} onStep={goToStep} steps={STEPS} labels={STEP_LABELS} />
 
       {error && (
-        <div style={{ display: "flex", alignItems: "center", gap: 8, background: "rgba(247,37,133,0.08)", border: "1px solid rgba(247,37,133,0.25)", borderRadius: 10, padding: "10px 16px", marginBottom: 18, fontSize: 13, color: "#f72585" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, background: "var(--c-error-bg)", border: "1px solid var(--c-error-border)", borderRadius: 10, padding: "10px 16px", marginBottom: 18, fontSize: 13, color: "#f72585" }}>
           <AlertCircle size={14} />
           {error}
         </div>
       )}
 
       {status && (
-        <div style={{ display: "flex", alignItems: "center", gap: 10, background: "rgba(114,9,183,0.08)", border: "1px solid rgba(114,9,183,0.2)", borderRadius: 10, padding: "10px 16px", marginBottom: 18, fontSize: 13, color: "#b5179e" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, background: "var(--c-status-bg)", border: "1px solid var(--c-status-border)", borderRadius: 10, padding: "10px 16px", marginBottom: 18, fontSize: 13, color: "#b5179e" }}>
           <Loader2 size={14} className="spinner" />
           {status}
         </div>
@@ -305,7 +377,7 @@ export default function ThumbCraft() {
       {/* ════ STEP 0: INPUT ════ */}
       {step === 0 && (
         <div style={{ maxWidth: 680 }}>
-          <p style={{ fontSize: 14, color: "rgba(255,255,255,0.5)", marginBottom: 20, lineHeight: 1.6 }}>
+          <p style={{ fontSize: 14, color: "var(--c-text-secondary)", marginBottom: 20, lineHeight: 1.6 }}>
             Provide a <strong style={{ color: "#fff" }}>YouTube URL</strong> for transcript analysis and a <strong style={{ color: "#fff" }}>video file</strong> for frame selection.
             Both are required.
           </p>
@@ -313,8 +385,10 @@ export default function ThumbCraft() {
           {/* YouTube URL */}
           <div style={{ ...cardStyle, marginBottom: 16 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+              <span style={{ fontSize: 10, fontWeight: 700, color: "#f72585", fontFamily: "'Space Mono', monospace" }}>1.</span>
               <span style={{ fontSize: 18 }}>🎬</span>
               <span style={{ fontSize: 14, fontWeight: 700, color: "#fff" }}>YouTube URL</span>
+              <span style={{ fontSize: 10, color: "var(--c-text-dim)", fontFamily: "'Space Mono', monospace" }}>(required)</span>
             </div>
             <input
               type="text"
@@ -323,7 +397,7 @@ export default function ThumbCraft() {
               placeholder="https://www.youtube.com/watch?v=..."
               style={inputStyle}
             />
-            <div style={{ marginTop: 10, fontSize: 11, color: "rgba(255,255,255,0.2)", lineHeight: 1.5 }}>
+            <div style={{ marginTop: 10, fontSize: 11, color: "var(--c-text-faint)", lineHeight: 1.5 }}>
               Supports: youtube.com/watch, youtu.be, /shorts/, /embed/, /live/ links or raw video ID
             </div>
           </div>
@@ -335,19 +409,24 @@ export default function ThumbCraft() {
               onDrop={handleFileDrop}
               style={{
                 ...cardStyle,
-                border: "2px dashed rgba(255,255,255,0.12)",
+                border: "2px dashed var(--c-border-subtle)",
                 textAlign: "center", padding: "40px 20px", cursor: "pointer",
                 transition: "all 0.2s",
               }}
               onClick={() => document.getElementById("video-input").click()}
               onMouseEnter={(e) => e.currentTarget.style.borderColor = "rgba(247,37,133,0.4)"}
-              onMouseLeave={(e) => e.currentTarget.style.borderColor = "rgba(255,255,255,0.12)"}
+              onMouseLeave={(e) => e.currentTarget.style.borderColor = "var(--c-border-subtle)"}
             >
-              <Upload size={28} style={{ color: "rgba(255,255,255,0.2)", marginBottom: 10 }} />
-              <p style={{ fontSize: 13, color: "rgba(255,255,255,0.5)", margin: "0 0 4px" }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, marginBottom: 16 }}>
+                <span style={{ fontSize: 10, fontWeight: 700, color: "#f72585", fontFamily: "'Space Mono', monospace" }}>2.</span>
+                <Upload size={16} style={{ color: "var(--c-text-dim)" }} />
+                <span style={{ fontSize: 14, fontWeight: 700, color: "#fff" }}>Video File</span>
+                <span style={{ fontSize: 10, color: "var(--c-text-dim)", fontFamily: "'Space Mono', monospace" }}>(required)</span>
+              </div>
+              <p style={{ fontSize: 13, color: "var(--c-text-secondary)", margin: "0 0 4px" }}>
                 Drop a video file here or <strong style={{ color: "#f72585" }}>browse</strong>
               </p>
-              <p style={{ fontSize: 11, color: "rgba(255,255,255,0.2)", margin: 0 }}>
+              <p style={{ fontSize: 11, color: "var(--c-text-faint)", margin: 0 }}>
                 MP4, MOV, MKV, WebM — used for frame-by-frame selection
               </p>
               <input
@@ -360,6 +439,12 @@ export default function ThumbCraft() {
             </div>
           ) : (
             <div style={cardStyle}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                <span style={{ fontSize: 10, fontWeight: 700, color: "#22c55e", fontFamily: "'Space Mono', monospace" }}>2.</span>
+                <span style={{ fontSize: 18 }}>🎞️</span>
+                <span style={{ fontSize: 14, fontWeight: 700, color: "#fff" }}>Video File</span>
+                <span style={{ fontSize: 10, color: "#22c55e", fontFamily: "'Space Mono', monospace" }}>(ready)</span>
+              </div>
               <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                 <div style={{
                   width: 36, height: 36, borderRadius: 10,
@@ -370,15 +455,15 @@ export default function ThumbCraft() {
                   <div style={{ fontSize: 13, fontWeight: 700, color: "#fff" }}>
                     {videoFile.name}
                   </div>
-                  <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", fontFamily: "'Space Mono', monospace" }}>
+                  <div style={{ fontSize: 11, color: "var(--c-text-muted)", fontFamily: "'Space Mono', monospace" }}>
                     {formatSize(videoFile.size)}
                   </div>
                 </div>
                 <button
                   onClick={() => setVideoFile(null)}
                   style={{
-                    background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)",
-                    color: "rgba(255,255,255,0.5)", borderRadius: 8, padding: "6px 12px",
+                    background: "var(--c-btn-bg)", border: "1px solid var(--c-input-border)",
+                    color: "var(--c-text-secondary)", borderRadius: 8, padding: "6px 12px",
                     fontSize: 11, cursor: "pointer", fontFamily: "'Space Mono', monospace",
                   }}
                 >Change</button>
@@ -404,11 +489,11 @@ export default function ThumbCraft() {
           <div style={{ display: "flex", gap: 20, marginBottom: 24, flexWrap: "wrap" }}>
             {videoThumbnail && (
               <div style={{ width: 240, flexShrink: 0 }}>
-                <div style={{ borderRadius: 12, overflow: "hidden", border: "1px solid rgba(255,255,255,0.08)" }}>
+                <div style={{ borderRadius: 12, overflow: "hidden", border: "1px solid var(--c-card-border)" }}>
                   <img src={videoThumbnail.preview} alt="Video thumbnail" style={{ width: "100%", display: "block" }} />
                 </div>
                 {videoTitle && (
-                  <div style={{ marginTop: 8, fontSize: 11, color: "rgba(255,255,255,0.4)", lineHeight: 1.4 }}>
+                  <div style={{ marginTop: 8, fontSize: 11, color: "var(--c-text-muted)", lineHeight: 1.4 }}>
                     {videoTitle}
                   </div>
                 )}
@@ -424,11 +509,11 @@ export default function ThumbCraft() {
                   <Tag>{nicheAnalysis.niche?.primary_category}</Tag>
                   <Tag>{nicheAnalysis.niche?.subcategory}</Tag>
                 </div>
-                <div style={{ fontSize: 12, color: "rgba(255,255,255,0.55)", marginBottom: 12, lineHeight: 1.6 }}>
-                  <strong style={{ color: "rgba(255,255,255,0.7)" }}>Audience:</strong> {nicheAnalysis.niche?.audience}
+                <div style={{ fontSize: 12, color: "var(--c-text-secondary)", marginBottom: 12, lineHeight: 1.6 }}>
+                  <strong style={{ color: "var(--c-text-bright)" }}>Audience:</strong> {nicheAnalysis.niche?.audience}
                 </div>
-                <div style={{ fontSize: 12, color: "rgba(255,255,255,0.55)", marginBottom: 12, lineHeight: 1.6 }}>
-                  <strong style={{ color: "rgba(255,255,255,0.7)" }}>Hook:</strong>{" "}
+                <div style={{ fontSize: 12, color: "var(--c-text-secondary)", marginBottom: 12, lineHeight: 1.6 }}>
+                  <strong style={{ color: "var(--c-text-bright)" }}>Hook:</strong>{" "}
                   <span style={{ color: "#f72585", fontWeight: 600 }}>{nicheAnalysis.emotional_hook?.type}</span>{" "}
                   — {nicheAnalysis.emotional_hook?.description}
                 </div>
@@ -438,7 +523,7 @@ export default function ThumbCraft() {
                 <div style={{ fontSize: 10, fontWeight: 700, color: "#7209b7", marginBottom: 8, fontFamily: "'Space Mono', monospace", letterSpacing: "0.1em" }}>
                   THUMBNAIL STRATEGY
                 </div>
-                <div style={{ fontSize: 13, color: "rgba(255,255,255,0.7)", lineHeight: 1.6, marginBottom: 8 }}>
+                <div style={{ fontSize: 13, color: "var(--c-text-bright)", lineHeight: 1.6, marginBottom: 8 }}>
                   {nicheAnalysis.thumbnail_strategy?.concept}
                 </div>
                 {nicheAnalysis.thumbnail_strategy?.text_overlay && (
@@ -462,6 +547,7 @@ export default function ThumbCraft() {
         <div>
           <Inspiration
             niche={nicheAnalysis}
+            theme={theme}
             onSelect={handleInspirationSelect}
           />
 
@@ -483,6 +569,7 @@ export default function ThumbCraft() {
             transcript={transcript}
             niche={nicheAnalysis}
             selectedInspiration={selectedInspiration}
+            theme={theme}
             onSelectFrame={handleFrameCaptured}
           />
 
@@ -505,24 +592,27 @@ export default function ThumbCraft() {
                 <h2 style={{ fontSize: 16, fontWeight: 700, color: "#fff", margin: "0 0 4px" }}>
                   Generate Thumbnail
                 </h2>
-                <p style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", margin: 0 }}>
+                <p style={{ fontSize: 12, color: "var(--c-text-muted)", margin: "0 0 2px" }}>
                   {selectedFrameTimestamp != null
                     ? `Using frame at ${formatTimestamp(selectedFrameTimestamp)} + inspiration thumbnail`
                     : `Using inspiration thumbnail only`
                   }
+                </p>
+                <p style={{ fontSize: 11, color: "var(--c-text-muted)", margin: 0, fontFamily: "'Space Mono', monospace" }}>
+                  AI will blend your captured frame with the inspiration style
                 </p>
               </div>
 
               <div style={{ display: "flex", gap: 16, flexWrap: "wrap", marginBottom: 24, alignItems: "flex-start" }}>
                 {selectedFrameDataUrl && (
                   <div style={{ width: 240, flexShrink: 0 }}>
-                    <div style={{ fontSize: 10, fontWeight: 700, color: "rgba(255,255,255,0.3)", marginBottom: 4, fontFamily: "'Space Mono', monospace" }}>
+                    <div style={{ fontSize: 10, fontWeight: 700, color: "var(--c-text-dim)", marginBottom: 4, fontFamily: "'Space Mono', monospace" }}>
                       CAPTURED FRAME
                     </div>
                     <div style={{ borderRadius: 10, overflow: "hidden", border: "2px solid #f72585" }}>
                       <img src={selectedFrameDataUrl} alt="Selected frame" style={{ width: "100%", display: "block" }} />
                     </div>
-                    <div style={{ marginTop: 4, textAlign: "center", fontSize: 10, color: "rgba(255,255,255,0.3)", fontFamily: "'Space Mono', monospace" }}>
+                    <div style={{ marginTop: 4, textAlign: "center", fontSize: 10, color: "var(--c-text-dim)", fontFamily: "'Space Mono', monospace" }}>
                       {formatTimestamp(selectedFrameTimestamp)}
                     </div>
                   </div>
@@ -530,13 +620,13 @@ export default function ThumbCraft() {
 
                 {selectedInspiration && (
                   <div style={{ width: 240, flexShrink: 0 }}>
-                    <div style={{ fontSize: 10, fontWeight: 700, color: "rgba(255,255,255,0.3)", marginBottom: 4, fontFamily: "'Space Mono', monospace" }}>
+                    <div style={{ fontSize: 10, fontWeight: 700, color: "var(--c-text-dim)", marginBottom: 4, fontFamily: "'Space Mono', monospace" }}>
                       INSPIRATION
                     </div>
                     <div style={{ borderRadius: 10, overflow: "hidden", border: "2px solid #7209b7" }}>
                       <img src={selectedInspiration.thumbnailUrl} alt="" style={{ width: "100%", display: "block" }} />
                     </div>
-                    <div style={{ marginTop: 4, textAlign: "center", fontSize: 10, color: "rgba(255,255,255,0.3)", fontFamily: "'Space Mono', monospace" }}>
+                    <div style={{ marginTop: 4, textAlign: "center", fontSize: 10, color: "var(--c-text-dim)", fontFamily: "'Space Mono', monospace" }}>
                       {selectedInspiration.viralRatio}x viral
                     </div>
                   </div>
@@ -547,7 +637,7 @@ export default function ThumbCraft() {
                     <div style={{ fontSize: 10, fontWeight: 700, color: "#f72585", marginBottom: 8, fontFamily: "'Space Mono', monospace", letterSpacing: "0.1em" }}>
                       THUMBNAIL STRATEGY
                     </div>
-                    <div style={{ fontSize: 13, color: "rgba(255,255,255,0.6)", lineHeight: 1.7, marginBottom: 8 }}>
+                    <div style={{ fontSize: 13, color: "var(--c-text-tertiary)", lineHeight: 1.7, marginBottom: 8 }}>
                       {nicheAnalysis?.thumbnail_strategy?.concept}
                     </div>
                     {nicheAnalysis?.thumbnail_strategy?.text_overlay && (
@@ -566,8 +656,8 @@ export default function ThumbCraft() {
                 </button>
                 <button onClick={() => setStep(3)}
                   style={{
-                    background: "transparent", border: "1px solid rgba(255,255,255,0.12)",
-                    color: "rgba(255,255,255,0.5)", borderRadius: 12,
+                    background: "transparent", border: "1px solid var(--c-border-subtle)",
+                    color: "var(--c-text-secondary)", borderRadius: 12,
                     padding: "13px 22px", fontSize: 13, fontWeight: 600, cursor: "pointer",
                     fontFamily: "'Space Mono', monospace",
                   }}>
@@ -581,7 +671,7 @@ export default function ThumbCraft() {
                 <h2 style={{ fontSize: 16, fontWeight: 700, color: "#fff", margin: "0 0 4px" }}>
                   Your Thumbnail
                 </h2>
-                <p style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", margin: 0 }}>
+                <p style={{ fontSize: 12, color: "var(--c-text-muted)", margin: 0 }}>
                   {selectedFrameTimestamp != null
                     ? `Generated using frame at ${formatTimestamp(selectedFrameTimestamp)} + inspiration`
                     : `Generated with inspiration reference`
@@ -592,7 +682,7 @@ export default function ThumbCraft() {
               <div style={{ maxWidth: 600, marginBottom: 24 }}>
                 <div style={{
                   borderRadius: 14, overflow: "hidden",
-                  border: "2px solid rgba(255,255,255,0.08)",
+                  border: "2px solid var(--c-card-border)",
                   position: "relative", background: "#1a1a2e",
                 }}>
                   <img src={generatedThumb.dataUrl || generatedThumb.url} alt="Generated thumbnail"
@@ -602,7 +692,7 @@ export default function ThumbCraft() {
                     background: "linear-gradient(transparent, rgba(0,0,0,0.85))",
                     padding: "30px 14px 10px",
                   }}>
-                    <span style={{ fontSize: 10, fontWeight: 700, color: "rgba(255,255,255,0.6)", fontFamily: "'Space Mono', monospace" }}>
+                    <span style={{ fontSize: 10, fontWeight: 700, color: "var(--c-text-tertiary)", fontFamily: "'Space Mono', monospace" }}>
                       GENERATED
                     </span>
                   </div>
@@ -619,33 +709,40 @@ export default function ThumbCraft() {
                   <Download size={14} /> Download
                 </button>
                 <button onClick={generateWithSelection} disabled={generating}
-                  style={{ ...btn(!generating), background: "rgba(255,255,255,0.05)", color: generating ? "rgba(255,255,255,0.3)" : "rgba(255,255,255,0.7)" }}>
+                  style={{ ...btn(!generating), background: "var(--c-btn-bg)", color: generating ? "var(--c-text-dim)" : "var(--c-text-bright)" }}>
                   {generating ? <><Loader2 size={14} className="spinner" /> Regenerating...</> : <><RefreshCw size={14} /> Regenerate</>}
                 </button>
                 <button onClick={() => setStep(3)}
                   style={{
-                    background: "transparent", border: "1px solid rgba(255,255,255,0.12)",
-                    color: "rgba(255,255,255,0.5)", borderRadius: 12,
+                    background: "transparent", border: "1px solid var(--c-border-subtle)",
+                    color: "var(--c-text-secondary)", borderRadius: 12,
                     padding: "13px 22px", fontSize: 13, fontWeight: 600, cursor: "pointer",
                     fontFamily: "'Space Mono', monospace",
                   }}>
                   ← Different Frame
                 </button>
               </div>
+
+              <ThumbnailCritique
+                critique={critique}
+                loading={critiqueLoading}
+                error={critiqueError}
+                theme={theme}
+              />
             </div>
           )}
         </div>
       )}
 
-      <div style={{ marginTop: 48, paddingTop: 16, borderTop: "1px solid rgba(255,255,255,0.04)", fontSize: 10, color: "rgba(255,255,255,0.15)", fontFamily: "'Space Mono', monospace" }}>
+      <div style={{ marginTop: 48, paddingTop: 16, borderTop: "1px solid var(--c-divider)", fontSize: 10, color: "var(--c-text-very-dim)", fontFamily: "'Space Mono', monospace" }}>
         Powered by YouTube Transcript API · OpenRouter · 100% in-browser frame capture
       </div>
 
       <style>{`
         @keyframes spin { to { transform: rotate(360deg); } }
         .spinner { animation: spin 0.8s linear infinite; }
-        input[type=range] { -webkit-appearance: none; appearance: none; height: 4px; background: rgba(255,255,255,0.1); border-radius: 2px; outline: none; }
-        input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 16px; height: 16px; border-radius: 50%; background: linear-gradient(135deg, #f72585, #7209b7); cursor: pointer; border: 2px solid rgba(255,255,255,0.15); }
+        input[type=range] { -webkit-appearance: none; appearance: none; height: 4px; background: var(--c-text-faint); border-radius: 2px; outline: none; }
+        input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 16px; height: 16px; border-radius: 50%; background: linear-gradient(135deg, #f72585, #7209b7); cursor: pointer; border: 2px solid var(--c-card-border); }
       `}</style>
     </div>
   )

@@ -10,7 +10,7 @@ function fmt(sec) {
   return `${m}:${s.toFixed(3).padStart(7, "0")}`
 }
 
-export default function FramePicker({ videoFile, recommendedTimestamps, onSelectFrame }) {
+export default function FramePicker({ videoFile, recommendedTimestamps, theme, onSelectFrame }) {
   const videoRef = useRef(null)
   const canvasRef = useRef(null)
   const [loaded, setLoaded] = useState(false)
@@ -128,15 +128,14 @@ export default function FramePicker({ videoFile, recommendedTimestamps, onSelect
   }
 
   const btnBase = {
-    background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)",
-    color: "rgba(255,255,255,0.7)", borderRadius: 8, padding: "6px 12px",
+    background: theme.btnBg, border: `1px solid ${theme.inputBorder}`,
+    color: theme.textTertiary, borderRadius: 8, padding: "6px 12px",
     fontSize: 12, fontWeight: 600, cursor: "pointer",
     fontFamily: "'Space Mono', monospace", transition: "all 0.2s",
   }
 
   return (
     <div>
-      {/* Video display */}
       <div style={{
         position: "relative", borderRadius: 12, overflow: "hidden",
         background: "#000", marginBottom: 10, maxWidth: 640,
@@ -168,7 +167,6 @@ export default function FramePicker({ videoFile, recommendedTimestamps, onSelect
         <video ref={videoRef} style={{ display: "none" }} playsInline />
       </div>
 
-      {/* Timeline */}
       <div style={{ maxWidth: 640, marginBottom: 10 }}>
         <input
           type="range"
@@ -179,7 +177,6 @@ export default function FramePicker({ videoFile, recommendedTimestamps, onSelect
           onChange={(e) => seek(parseFloat(e.target.value))}
           style={{ width: "100%", margin: 0 }}
         />
-        {/* Recommended markers */}
         {recommendedTimestamps && recommendedTimestamps.length > 0 && (
           <div style={{ position: "relative", height: 10, marginTop: 2 }}>
             {recommendedTimestamps.map((ts, i) => (
@@ -200,7 +197,6 @@ export default function FramePicker({ videoFile, recommendedTimestamps, onSelect
         )}
       </div>
 
-      {/* Controls */}
       <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 16, maxWidth: 640 }}>
         <button onClick={togglePlay} style={btnBase} disabled={!loaded}>
           {playing ? "⏸ Pause" : "▶ Play"}
@@ -221,7 +217,7 @@ export default function FramePicker({ videoFile, recommendedTimestamps, onSelect
             if (videoRef.current) videoRef.current.playbackRate = s
           }}
           style={{
-            ...btnBase, background: "rgba(255,255,255,0.04)",
+            ...btnBase, background: theme.btnBg,
             cursor: loaded ? "pointer" : "not-allowed",
           }}
           disabled={!loaded}
@@ -238,11 +234,10 @@ export default function FramePicker({ videoFile, recommendedTimestamps, onSelect
         </button>
       </div>
 
-      {/* Captured frames strip */}
       {captured.length > 0 && (
         <div style={{ maxWidth: 640 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-            <span style={{ fontSize: 13, fontWeight: 700, color: "rgba(255,255,255,0.7)" }}>
+            <span style={{ fontSize: 13, fontWeight: 700, color: theme.textPrimary }}>
               Captured Frames ({captured.length})
             </span>
             <button onClick={downloadAll} style={btnBase}>
@@ -257,14 +252,14 @@ export default function FramePicker({ videoFile, recommendedTimestamps, onSelect
                 key={i}
                 style={{
                   flexShrink: 0, width: 120, borderRadius: 8, overflow: "hidden",
-                  border: previewIdx === i ? "2px solid #f72585" : "2px solid rgba(255,255,255,0.08)",
+                  border: previewIdx === i ? "2px solid #f72585" : `2px solid ${theme.cardBorder}`,
                   background: "#0a0a14", cursor: "pointer", position: "relative",
                 }}
                 onClick={() => setPreviewIdx(previewIdx === i ? null : i)}
               >
                 <img src={frame.dataUrl} alt="" style={{ width: "100%", display: "block" }} />
                 <div style={{
-                  fontSize: 9, color: "rgba(255,255,255,0.5)", textAlign: "center",
+                  fontSize: 9, color: theme.textMuted, textAlign: "center",
                   padding: "2px 0", fontFamily: "'Space Mono', monospace",
                 }}>
                   {fmt(frame.timestamp)}
@@ -286,10 +281,9 @@ export default function FramePicker({ videoFile, recommendedTimestamps, onSelect
         </div>
       )}
 
-      {/* Preview + select */}
       {captured.length > 0 && (
         <div style={{ maxWidth: 640, marginTop: 16 }}>
-          <p style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginBottom: 8 }}>
+          <p style={{ fontSize: 12, color: theme.textMuted, marginBottom: 8 }}>
             Click a frame above to preview, then select it below:
           </p>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -301,9 +295,9 @@ export default function FramePicker({ videoFile, recommendedTimestamps, onSelect
                   ...btnBase,
                   background: previewIdx === i
                     ? "linear-gradient(135deg, #f72585, #7209b7)"
-                    : "rgba(255,255,255,0.05)",
-                  color: previewIdx === i ? "#fff" : "rgba(255,255,255,0.6)",
-                  border: previewIdx === i ? "none" : "1px solid rgba(255,255,255,0.1)",
+                    : theme.btnBg,
+                  color: previewIdx === i ? "#fff" : theme.textTertiary,
+                  border: previewIdx === i ? "none" : `1px solid ${theme.inputBorder}`,
                   display: "flex", alignItems: "center", gap: 4,
                 }}
               >

@@ -5,15 +5,14 @@ import { FRAME_GUIDANCE_PROMPT } from "./prompts"
 import { formatTranscript } from "./transcript"
 import FramePicker from "./framepicker"
 
-const cardStyle = { background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 14, padding: 20 }
-
 const guidanceIcons = {
   composition_advice: Lightbulb,
   inspiration_alignment: Layers,
   recommended_approach: Compass,
 }
 
-export default function FrameGuide({ videoFile, transcript, niche, selectedInspiration, onSelectFrame }) {
+export default function FrameGuide({ videoFile, transcript, niche, selectedInspiration, theme, onSelectFrame }) {
+  const cardStyle = { background: theme.cardBg, border: `1px solid ${theme.cardBorder}`, borderRadius: 14, padding: 20 }
   const [guidance, setGuidance] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState("")
@@ -58,43 +57,41 @@ export default function FrameGuide({ videoFile, transcript, niche, selectedInspi
   return (
     <div>
       <div style={{ marginBottom: 22 }}>
-        <h2 style={{ fontSize: 16, fontWeight: 700, color: "#fff", margin: "0 0 4px" }}>
+        <h2 style={{ fontSize: 16, fontWeight: 700, color: theme.textPrimary, margin: "0 0 4px" }}>
           AI-Guided Frame Selection
         </h2>
-        <p style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", margin: 0 }}>
+        <p style={{ fontSize: 12, color: theme.textMuted, margin: 0 }}>
           AI analyzed your transcript + inspiration thumbnail. Use the advice below to pick the perfect frame.
         </p>
       </div>
 
       <div style={{ display: "flex", gap: 16, marginBottom: 24, flexWrap: "wrap" }}>
-        {/* Inspiration thumbnail */}
         {selectedInspiration && (
           <div style={{ width: 200, flexShrink: 0 }}>
-            <div style={{ fontSize: 10, fontWeight: 700, color: "rgba(255,255,255,0.3)", marginBottom: 6, fontFamily: "'Space Mono', monospace" }}>
+            <div style={{ fontSize: 10, fontWeight: 700, color: theme.textDim, marginBottom: 6, fontFamily: "'Space Mono', monospace" }}>
               INSPIRATION
             </div>
-            <div style={{ borderRadius: 10, overflow: "hidden", border: "1px solid rgba(255,255,255,0.08)" }}>
+            <div style={{ borderRadius: 10, overflow: "hidden", border: `1px solid ${theme.cardBorder}` }}>
               <img src={selectedInspiration.thumbnailUrl} alt="" style={{ width: "100%", display: "block" }} />
             </div>
-            <div style={{ fontSize: 10, color: "rgba(255,255,255,0.3)", marginTop: 4, fontFamily: "'Space Mono', monospace" }}>
+            <div style={{ fontSize: 10, color: theme.textDim, marginTop: 4, fontFamily: "'Space Mono', monospace" }}>
               {selectedInspiration.title?.slice(0, 60)}
             </div>
           </div>
         )}
 
-        {/* AI Guidance */}
         <div style={{ flex: 1, minWidth: 300 }}>
           {loading && (
             <div style={{ ...cardStyle, display: "flex", alignItems: "center", gap: 12 }}>
               <Loader2 size={18} className="spinner" style={{ color: "#b5179e" }} />
-              <span style={{ fontSize: 13, color: "rgba(255,255,255,0.5)", fontFamily: "'Space Mono', monospace" }}>
+              <span style={{ fontSize: 13, color: theme.textSecondary, fontFamily: "'Space Mono', monospace" }}>
                 {streamText}
               </span>
             </div>
           )}
 
           {error && (
-            <div style={{ ...cardStyle, border: "1px solid rgba(247,37,133,0.25)" }}>
+            <div style={{ ...cardStyle, border: `1px solid ${theme.errorBorder}` }}>
               <p style={{ fontSize: 13, color: "#f72585", margin: 0 }}>{error}</p>
             </div>
           )}
@@ -109,7 +106,7 @@ export default function FrameGuide({ videoFile, transcript, niche, selectedInspi
                       COMPOSITION ADVICE
                     </span>
                   </div>
-                  <p style={{ fontSize: 13, color: "rgba(255,255,255,0.65)", lineHeight: 1.6, margin: 0 }}>
+                  <p style={{ fontSize: 13, color: theme.textTertiary, lineHeight: 1.6, margin: 0 }}>
                     {guidance.composition_advice}
                   </p>
                 </div>
@@ -123,7 +120,7 @@ export default function FrameGuide({ videoFile, transcript, niche, selectedInspi
                       WHAT TO LOOK FOR
                     </span>
                   </div>
-                  <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12, color: "rgba(255,255,255,0.55)", lineHeight: 1.8 }}>
+                  <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12, color: theme.textSecondary, lineHeight: 1.8 }}>
                     {guidance.frame_characteristics.map((c, i) => (
                       <li key={i}>{c}</li>
                     ))}
@@ -139,7 +136,7 @@ export default function FrameGuide({ videoFile, transcript, niche, selectedInspi
                       INSPIRATION ALIGNMENT
                     </span>
                   </div>
-                  <p style={{ fontSize: 13, color: "rgba(255,255,255,0.65)", lineHeight: 1.6, margin: 0 }}>
+                  <p style={{ fontSize: 13, color: theme.textTertiary, lineHeight: 1.6, margin: 0 }}>
                     {guidance.inspiration_alignment}
                   </p>
                 </div>
@@ -153,7 +150,7 @@ export default function FrameGuide({ videoFile, transcript, niche, selectedInspi
                       RECOMMENDED APPROACH
                     </span>
                   </div>
-                  <p style={{ fontSize: 13, color: "rgba(255,255,255,0.65)", lineHeight: 1.6, margin: 0, textTransform: "capitalize" }}>
+                  <p style={{ fontSize: 13, color: theme.textTertiary, lineHeight: 1.6, margin: 0, textTransform: "capitalize" }}>
                     {guidance.recommended_approach.replace(/_/g, " ")}
                   </p>
                 </div>
@@ -163,10 +160,36 @@ export default function FrameGuide({ videoFile, transcript, niche, selectedInspi
         </div>
       </div>
 
-      {/* Frame Picker */}
+      <div style={{
+        display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap",
+        marginBottom: 12, padding: "10px 14px",
+        background: theme.cardBg, borderRadius: 10,
+        border: `1px solid ${theme.cardBorder}`,
+      }}>
+        <span style={{ fontSize: 10, fontWeight: 700, color: theme.textDim, fontFamily: "'Space Mono', monospace", letterSpacing: "0.1em" }}>
+          SHORTCUTS
+        </span>
+        {[
+          { key: "← →", desc: "Step frame" },
+          { key: "Shift+←/→", desc: "10 frames" },
+          { key: "↑ ↓", desc: "1 second" },
+          { key: "Space", desc: "Play/pause" },
+          { key: "C", desc: "Capture frame" },
+        ].map((s) => (
+          <span key={s.key} style={{ fontSize: 11, color: theme.textMuted, fontFamily: "'Space Mono', monospace" }}>
+            <kbd style={{
+              background: theme.btnBg, padding: "2px 6px", borderRadius: 4,
+              border: `1px solid ${theme.inputBorder}`, fontSize: 10, color: theme.textTertiary,
+            }}>{s.key}</kbd>
+            <span style={{ marginLeft: 4 }}>{s.desc}</span>
+          </span>
+        ))}
+      </div>
+
       {videoFile && (
         <FramePicker
           videoFile={videoFile}
+          theme={theme}
           recommendedTimestamps={[]}
           onSelectFrame={handleFrameSelect}
         />

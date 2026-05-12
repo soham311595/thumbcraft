@@ -8,7 +8,7 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: "OPENROUTER_API_KEY not configured" });
   }
 
-  const { prompt, image_config, reference_image } = req.body;
+  const { prompt, reference_image } = req.body;
   if (!prompt) {
     return res.status(400).json({ error: "Missing prompt" });
   }
@@ -30,13 +30,9 @@ export default async function handler(req, res) {
         "X-Title": "ThumbCraft",
       },
       body: JSON.stringify({
-        model: "google/gemini-3.1-flash-image-preview",
+        model: "sourceful/riverflow-v2-pro",
         messages: [{ role: "user", content: messageContent }],
-        modalities: ["image", "text"],
-        image_config: image_config || {
-          aspect_ratio: "16:9",
-          image_size: "2K",
-        },
+        modalities: ["image"],
       }),
     });
 
@@ -53,7 +49,7 @@ export default async function handler(req, res) {
 
     const images = data?.choices?.[0]?.message?.images;
     if (!images?.length) {
-      return res.status(500).json({ error: "No image in Gemini response" });
+      return res.status(500).json({ error: "No image in model response" });
     }
 
     return res.status(200).json({

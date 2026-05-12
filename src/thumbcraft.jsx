@@ -1,10 +1,11 @@
 import { useState, useRef } from "react"
-import { analyzeText, analyzeVision, generateThumbnail } from "./ai"
-import { fetchTranscript, formatTranscript, fetchVideoTitle } from "./transcript"
+import { analyzeText, generateThumbnail } from "./ai"
+import { transcribeVideo } from "./whisper"
+import { formatTranscript } from "./transcript"
+import FramePicker from "./framepicker"
 
 import {
   NICHE_ANALYSIS_PROMPT,
-  STYLE_ANALYSIS_PROMPT,
   IMAGE_PROMPT_GENERATOR,
   FRAME_RECOMMENDATION_PROMPT,
 } from "./prompts"
@@ -14,63 +15,15 @@ import {
   Loader2,
   RefreshCw,
   Sparkles,
-  Search,
-  Video,
+  Upload,
 } from "lucide-react"
-import { extractFrameByIndex } from "./storyboard"
 import Canvas from "./components/Editor/Canvas"
 import { Toolbar } from "./components/Editor/Toolbar"
 import { LayersPanel } from "./components/Editor/LayersPanel"
 import { PropertiesPanel } from "./components/Editor/PropertiesPanel"
 
-
 const STEPS = ["input", "niche", "frames", "generate"]
 const STEP_LABELS = ["Video", "Niche", "Pick Frame", "Generate"]
-
-function extractVideoId(input) {
-  const trimmed = input.trim()
-  if (/^[a-zA-Z0-9_-]{11}$/.test(trimmed)) return trimmed
-  try {
-    const url = new URL(trimmed)
-    if (url.hostname === "youtu.be") return url.pathname.slice(1).split("/")[0].slice(0, 11)
-    if (url.searchParams.has("v")) return url.searchParams.get("v")
-    const match = url.pathname.match(/\/(embed|v|shorts|live)\/([a-zA-Z0-9_-]{11})/)
-    if (match) return match[2]
-  } catch {}
-  const m = trimmed.match(/[a-zA-Z0-9_-]{11}/)
-  return m ? m[0] : null
-}
-
-function fetchYtThumbnail(videoId) {
-  return new Promise((resolve, reject) => {
-    const tryLoad = (quality, fallback) => {
-      const img = new Image()
-      img.crossOrigin = "anonymous"
-      img.onload = () => {
-        if (img.naturalWidth <= 120 && fallback) {
-          tryLoad(fallback, null)
-          return
-        }
-        const c = document.createElement("canvas")
-        c.width = img.naturalWidth
-        c.height = img.naturalHeight
-        c.getContext("2d").drawImage(img, 0, 0)
-        try {
-          const b64 = c.toDataURL("image/jpeg", 0.85).split(",")[1]
-          resolve({ base64: b64, preview: c.toDataURL("image/jpeg", 0.85), videoId })
-        } catch {
-          reject(new Error("CORS blocked"))
-        }
-      }
-      img.onerror = () => {
-        if (fallback) tryLoad(fallback, null)
-        else reject(new Error(`Not found: ${videoId}`))
-      }
-      img.src = `https://img.youtube.com/vi/${videoId}/${quality}.jpg`
-    }
-    tryLoad("maxresdefault", "hqdefault")
-  })
-}
 
 function formatTimestamp(sec) {
   const m = Math.floor(sec / 60)
@@ -78,25 +31,9 @@ function formatTimestamp(sec) {
   return `${m}:${s.toString().padStart(2, "0")}`
 }
 
-function loadImageAsDataUrl(url) {
-  return new Promise((resolve, reject) => {
-    const img = new Image()
-    img.crossOrigin = "anonymous"
-    img.onload = () => {
-      const c = document.createElement("canvas")
-      c.width = img.naturalWidth
-      c.height = img.naturalHeight
-      c.getContext("2d").drawImage(img, 0, 0)
-      resolve(c.toDataURL("image/jpeg", 0.85))
-    }
-    img.onerror = reject
-    img.src = url
-  })
-}
-
-function getVideoDuration(segments) {
-  if (!segments?.length) return 0
-  return segments[segments.length - 1].start + segments[segments.length - 1].duration
+function formatSize(bytes) {
+  if (bytes < 1e6) return (bytes / 1024).toFixed(1) + " KB"
+  return (bytes / 1e6).toFixed(1) + " MB"
 }
 
 function Stepper({ step, onStep, steps, labels }) {
@@ -134,8 +71,12 @@ function Stepper({ step, onStep, steps, labels }) {
 export default function ThumbCraft() {
   const [step, setStep] = useState(0)
   const [view, setView] = useState("wizard")
-  const [videoUrl, setVideoUrl] = useState("")
-  const videoId = videoUrl ? extractVideoId(videoUrl) : null
+
+  // File + transcription
+  const [videoFile, setVideoFile] = useState(null)
+  const [transcribing, setTranscribing] = useState(false)
+  const [transcribeProgress, setTranscribeProgress] = useState(null)
+  const [transcriptData, setTranscriptData] = useState(null)
 
   // Loading / status
   const [loading, setLoading] = useState(false)
@@ -143,23 +84,12 @@ export default function ThumbCraft() {
   const [status, setStatus] = useState("")
 
   // Step 1 — Niche
-  const [transcript, setTranscript] = useState(null)
-  const [transcriptText, setTranscriptText] = useState("")
-  const [videoTitle, setVideoTitle] = useState(null)
-  const [videoThumbnail, setVideoThumbnail] = useState(null)
   const [nicheAnalysis, setNicheAnalysis] = useState(null)
 
-  // Step 2 — Frame Selection
+  // Step 2 — Frame Selection (recommendations from AI, actual capture in FramePicker)
   const [frameRecs, setFrameRecs] = useState(null)
   const [conceptIdeas, setConceptIdeas] = useState([])
   const [framesLoading, setFramesLoading] = useState(false)
-  const sliderDebounceRef = useRef({})
-  const [storyboardSpec, setStoryboardSpec] = useState(null)
-  const [frameDataUrls, setFrameDataUrls] = useState({})
-  const [sliderOffsets, setSliderOffsets] = useState({})
-  const [isExtracting, setIsExtracting] = useState(false)
-  const [extractErrors, setExtractErrors] = useState({})
-  const [videoDuration, setVideoDuration] = useState(0)
 
   // Step 3 — Generate
   const [selectedFrameTimestamp, setSelectedFrameTimestamp] = useState(null)
@@ -168,50 +98,65 @@ export default function ThumbCraft() {
   const [generatedThumb, setGeneratedThumb] = useState(null)
   const [generating, setGenerating] = useState(false)
 
-  // Step 2 — Style (kept as optional)
-  const [competitorVideos, setCompetitorVideos] = useState([])
-  const [competitorUrls, setCompetitorUrls] = useState([])
-  const [styleAnalysis, setStyleAnalysis] = useState(null)
-
   // Editor
   const [editingThumbnail, setEditingThumbnail] = useState(null)
   const canvasRef = useRef(null)
   const [selectedObject, setSelectedObject] = useState(null)
   const [canvasObjects, setCanvasObjects] = useState([])
 
-  // ─── Step 1: Niche Analysis ──────────────────────────────
-  const analyzeVideo = async () => {
-    if (!videoId) {
-      setError("Enter a valid YouTube URL")
-      return
+  // ─── File upload + auto-transcribe ─────────────────────
+  const handleFile = async (file) => {
+    setVideoFile(file)
+    setError("")
+    setTranscribing(true)
+    setTranscribeProgress({ phase: "starting", percent: 0 })
+
+    try {
+      const result = await transcribeVideo(file, (p) => {
+        setTranscribeProgress(p)
+      })
+      setTranscriptData(result)
+      setTranscribeProgress(null)
+      setTranscribing(false)
+      await analyzeVideo(result)
+    } catch (e) {
+      setError(e.message)
+      setTranscribing(false)
+      setTranscribeProgress(null)
+      setLoading(false)
     }
+  }
+
+  const handleDrop = (e) => {
+    e.preventDefault()
+    const file = e.dataTransfer.files[0]
+    if (file && /video\//.test(file.type)) handleFile(file)
+    else setError("Please upload a video file (MP4, MOV, MKV, WebM)")
+  }
+
+  const handleFileInput = (e) => {
+    const file = e.target.files[0]
+    if (file) handleFile(file)
+  }
+
+  // ─── Step 1: Niche Analysis ────────────────────────────
+  const analyzeVideo = async (result) => {
+    const data = result || transcriptData
+    if (!data) return
     setLoading(true)
     setError("")
-    setStatus("Fetching video info...")
+    setStatus("Analyzing niche...")
+
     try {
-      const thumb = await fetchYtThumbnail(videoId)
-      setVideoThumbnail(thumb)
+      const formatted = formatTranscript(data.segments, 6000)
+      const title = videoFile?.name?.replace(/\.[^/.]+$/, "") || "Untitled Video"
 
-      setStatus("Fetching title and transcript...")
-      const abort = new AbortController()
-      const timeout = setTimeout(() => abort.abort(), 15000)
-      const [title, segments] = await Promise.all([
-        fetchVideoTitle(videoId, abort.signal),
-        fetchTranscript(videoId, abort.signal),
-      ]).finally(() => clearTimeout(timeout))
-      setVideoTitle(title)
-      setTranscript(segments)
-
-      const formatted = formatTranscript(segments, 6000)
-      setTranscriptText(formatted)
-
-      setStatus("Analyzing niche...")
-      const result = await analyzeText(
-        NICHE_ANALYSIS_PROMPT(formatted, title || "Unknown"),
+      const analysis = await analyzeText(
+        NICHE_ANALYSIS_PROMPT(formatted, title),
         null,
         { reasoning: false },
       )
-      setNicheAnalysis(result)
+      setNicheAnalysis(analysis)
       setStep(1)
     } catch (e) {
       setError(e.message)
@@ -221,92 +166,22 @@ export default function ThumbCraft() {
     }
   }
 
-  // ─── Extract a single frame from storyboard ────────────
-  const extractSingleFrame = async (recIndex, timestamp, spec, dur) => {
-    const s = spec || storyboardSpec
-    const d = dur || videoDuration || getVideoDuration(transcript)
-    if (!s || !videoId) {
-      setExtractErrors((prev) => ({ ...prev, [recIndex]: "Storyboard not available" }))
-      return
-    }
-    try {
-      const dataUrl = await extractFrameByIndex(videoId, s, timestamp, d)
-      if (dataUrl) {
-        setFrameDataUrls((prev) => ({ ...prev, [recIndex]: dataUrl }))
-        setExtractErrors((prev) => {
-          const next = { ...prev }
-          delete next[recIndex]
-          return next
-        })
-      } else {
-        throw new Error("Extraction returned null")
-      }
-    } catch (e) {
-      setExtractErrors((prev) => ({ ...prev, [recIndex]: e.message }))
-    }
-  }
-
-  // ─── Debounced slider change handler ────────────────
-  const handleSliderChange = (recIndex, offset, baseTimestamp) => {
-    const newSlider = { ...sliderOffsets, [recIndex]: offset }
-    setSliderOffsets(newSlider)
-
-    if (sliderDebounceRef.current[recIndex]) {
-      clearTimeout(sliderDebounceRef.current[recIndex])
-    }
-    sliderDebounceRef.current[recIndex] = setTimeout(() => {
-      const adjustedTs = Math.max(0, baseTimestamp + offset)
-      extractSingleFrame(recIndex, adjustedTs, null, null)
-    }, 100)
-  }
-
-  // ─── Step 2: Open Frame Selection ───────────────────────
+  // ─── Step 2: Open Frame Selection ──────────────────────
   const openFrameSelection = async () => {
-    if (!nicheAnalysis || !videoId || !transcript) return
+    if (!nicheAnalysis || !transcriptData) return
     setFramesLoading(true)
     setError("")
-    setStatus("Loading storyboard and analyzing frames...")
+    setStatus("Analyzing transcript for frame recommendations...")
     setStep(2)
-    setStoryboardSpec(null)
-    setFrameDataUrls({})
-    setSliderOffsets({})
-    setExtractErrors({})
+    setFrameRecs(null)
+    setConceptIdeas([])
 
     try {
-      setStatus("Fetching storyboard data...")
-      let spec = ""
-      let duration = getVideoDuration(transcript)
-      try {
-        const playerResp = await fetch(`/api/player?vid=${videoId}`)
-        if (playerResp.ok) {
-          const playerData = await playerResp.json()
-          spec = playerData.spec || ""
-          if (playerData.duration) duration = playerData.duration
-        } else {
-          console.warn("Player API failed, falling back:", playerResp.status)
-        }
-      } catch (e) {
-        console.warn("Player fetch failed, falling back:", e.message)
-      }
-      setStoryboardSpec(spec)
-      setVideoDuration(duration)
-
-      setStatus("Analyzing transcript for frame recommendations...")
       const frameResult = await analyzeText(
-        FRAME_RECOMMENDATION_PROMPT(transcript, nicheAnalysis),
+        FRAME_RECOMMENDATION_PROMPT(transcriptData.segments, nicheAnalysis),
       )
-
-      const recs = frameResult.recommended_frames || []
-
-      setFrameRecs(recs)
+      setFrameRecs(frameResult.recommended_frames || [])
       setConceptIdeas(frameResult.concept_ideas || [])
-
-      setIsExtracting(true)
-      const extractPromises = recs.map((rec, i) =>
-        extractSingleFrame(i, rec.timestamp, spec || null, duration),
-      )
-      await Promise.allSettled(extractPromises)
-      setIsExtracting(false)
     } catch (e) {
       console.error("Frame analysis error:", e)
       setError("Frame analysis failed: " + e.message)
@@ -317,27 +192,10 @@ export default function ThumbCraft() {
     }
   }
 
-  // ─── Select Frame (storyboard) ──────────────────────────
-  const handleSelectFrame = async (recIndex) => {
-    const rec = frameRecs[recIndex]
-    const offset = sliderOffsets[recIndex] || 0
-    const ts = Math.max(0, rec.timestamp + offset)
-
-    const dataUrl = frameDataUrls[recIndex]
-    if (dataUrl) {
-      setSelectedFrameDataUrl(dataUrl)
-    } else {
-      try {
-        const loaded = await loadImageAsDataUrl(
-          `https://img.youtube.com/vi/${videoId}/0.jpg`,
-        )
-        setSelectedFrameDataUrl(loaded)
-      } catch {
-        setSelectedFrameDataUrl(`https://img.youtube.com/vi/${videoId}/0.jpg`)
-      }
-    }
-
-    setSelectedFrameTimestamp(ts)
+  // ─── Select Frame from FramePicker ──────────────────────
+  const handleFrameCaptured = (dataUrl, timestamp) => {
+    setSelectedFrameDataUrl(dataUrl)
+    setSelectedFrameTimestamp(timestamp)
     setSelectedConceptTitle(null)
     setStep(3)
   }
@@ -351,41 +209,7 @@ export default function ThumbCraft() {
     setStep(3)
   }
 
-  // ─── Step 3: Style Research (optional) ──────────────────
-  const researchCompetition = async () => {
-    if (!nicheAnalysis?.scraping_queries?.length) {
-      setError("No search queries available")
-      return
-    }
-    setLoading(true)
-    setError("")
-    setStatus("Searching YouTube...")
-
-    try {
-      const query = nicheAnalysis.scraping_queries.slice(0, 3).join(" ")
-      const res = await fetch(`/api/youtube-search?q=${encodeURIComponent(query)}`)
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.error || "Search failed")
-
-      const urls = data.videos.map((v) => v.thumbnail).filter(Boolean).slice(0, 8)
-      setCompetitorVideos(data.videos)
-      setCompetitorUrls(urls)
-
-      setStatus("Analyzing competitor styles...")
-      const styleResult = await analyzeVision(
-        urls,
-        STYLE_ANALYSIS_PROMPT(urls.length),
-      )
-      setStyleAnalysis(styleResult)
-    } catch (e) {
-      setError(e.message)
-    } finally {
-      setLoading(false)
-      setStatus("")
-    }
-  }
-
-  // ─── Step 3: Generate with Frame/Concept ────────────────
+  // ─── Step 3: Generate ───────────────────────────────────
   const generateWithSelection = async () => {
     if (!nicheAnalysis) return
     setGenerating(true)
@@ -396,11 +220,9 @@ export default function ThumbCraft() {
       let promptText
 
       if (selectedFrameTimestamp != null && selectedFrameDataUrl) {
-        const rec = frameRecs?.find((r) => Math.abs(r.timestamp - selectedFrameTimestamp) < 11)
-        const concept = rec?.thumbnail_concept || ""
-        promptText = `Use this video frame as the visual starting point for a YouTube thumbnail. Keep the subject and composition of the frame but enhance it with bold colors, dramatic lighting, and text overlay. This MUST be a HIGH-CTR thumbnail that creates a curiosity gap — make viewers feel they NEED to click to find out what's inside.\n\nTHUMBNAIL CONCEPT: ${concept}\n\n${IMAGE_PROMPT_GENERATOR(nicheAnalysis, styleAnalysis, 0)}`
+        promptText = `Use this video frame as the visual starting point for a YouTube thumbnail. Keep the subject and composition of the frame but enhance it with bold colors, dramatic lighting, and text overlay. This MUST be a HIGH-CTR thumbnail that creates a curiosity gap — make viewers feel they NEED to click to find out what's inside.\n\n${IMAGE_PROMPT_GENERATOR(nicheAnalysis, null, 0)}`
       } else {
-        promptText = `Create a YouTube thumbnail based on this concept (no video frame reference needed). This MUST be a HIGH-CTR thumbnail that creates a curiosity gap — make viewers feel they NEED to click to find out what's inside.\n\nCONCEPT: ${selectedConceptTitle || ""}\n\n${IMAGE_PROMPT_GENERATOR(nicheAnalysis, styleAnalysis, 0)}`
+        promptText = `Create a YouTube thumbnail based on this concept (no video frame reference needed). This MUST be a HIGH-CTR thumbnail that creates a curiosity gap — make viewers feel they NEED to click to find out what's inside.\n\nCONCEPT: ${selectedConceptTitle || ""}\n\n${IMAGE_PROMPT_GENERATOR(nicheAnalysis, null, 0)}`
       }
 
       const result = await generateThumbnail(promptText, null, selectedFrameDataUrl || undefined)
@@ -413,7 +235,7 @@ export default function ThumbCraft() {
     }
   }
 
-  // ─── Editor ──────────────────────────────────────────────
+  // ─── Editor ────────────────────────────────────────────
   const openEditor = (thumb) => {
     setEditingThumbnail(thumb)
     setView("editor")
@@ -443,7 +265,7 @@ export default function ThumbCraft() {
     if (canGo[s]) setStep(s)
   }
 
-  // ─── Render ──────────────────────────────────────────────
+  // ─── Render helpers ─────────────────────────────────────
   const appBg = { minHeight: "100vh", background: "#08080f", color: "#e0e0ec", fontFamily: "'DM Sans', -apple-system, sans-serif", padding: "20px 24px" }
   const cardStyle = { background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 14, padding: 20 }
   const inputStyle = { width: "100%", boxSizing: "border-box", background: "rgba(0,0,0,0.3)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 10, padding: "10px 14px", color: "#fff", fontSize: 14, fontFamily: "'Space Mono', monospace", outline: "none" }
@@ -462,6 +284,12 @@ export default function ThumbCraft() {
     alignItems: "center",
     gap: 8,
   })
+
+  const progressLabel = {
+    "extracting-audio": "Extracting audio from video...",
+    "loading-model": "Downloading Whisper model (145MB, cached after first use)...",
+    "transcribing": "Transcribing audio...",
+  }
 
   // ─── EDITOR VIEW ─────────────────────────────────────────
   if (view === "editor" && editingThumbnail) {
@@ -557,7 +385,7 @@ export default function ThumbCraft() {
             ThumbCraft
           </h1>
           <p style={{ margin: 0, fontSize: 11, color: "rgba(255,255,255,0.3)", fontFamily: "'Space Mono', monospace" }}>
-            AI thumbnail generator with frame selection
+            AI thumbnail generator — local Whisper transcription + frame capture
           </p>
         </div>
       </div>
@@ -578,29 +406,100 @@ export default function ThumbCraft() {
         </div>
       )}
 
-      {/* ════ STEP 0: INPUT ════ */}
+      {/* ════ STEP 0: UPLOAD ════ */}
       {step === 0 && (
         <div style={{ maxWidth: 680 }}>
           <p style={{ fontSize: 14, color: "rgba(255,255,255,0.5)", marginBottom: 20, lineHeight: 1.6 }}>
-            Paste a <strong style={{ color: "#fff" }}>YouTube video link</strong> to analyze its niche and generate a custom thumbnail.
+            Upload a <strong style={{ color: "#fff" }}>video file</strong> to transcribe it locally and generate a custom thumbnail.
+            No data leaves your device.
           </p>
 
-          <div style={cardStyle}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
-              <span style={{ fontSize: 18 }}>🎬</span>
-              <span style={{ fontSize: 14, fontWeight: 700, color: "#fff" }}>YouTube Video</span>
+          {!videoFile ? (
+            <div
+              onDragOver={(e) => e.preventDefault()}
+              onDrop={handleDrop}
+              style={{
+                ...cardStyle,
+                border: "2px dashed rgba(255,255,255,0.12)",
+                textAlign: "center", padding: "50px 20px", cursor: "pointer",
+                transition: "all 0.2s",
+              }}
+              onClick={() => document.getElementById("video-input").click()}
+              onMouseEnter={(e) => e.currentTarget.style.borderColor = "rgba(247,37,133,0.4)"}
+              onMouseLeave={(e) => e.currentTarget.style.borderColor = "rgba(255,255,255,0.12)"}
+            >
+              <Upload size={32} style={{ color: "rgba(255,255,255,0.2)", marginBottom: 12 }} />
+              <p style={{ fontSize: 14, color: "rgba(255,255,255,0.5)", margin: "0 0 4px" }}>
+                Drop a video here or <strong style={{ color: "#f72585" }}>click to browse</strong>
+              </p>
+              <p style={{ fontSize: 11, color: "rgba(255,255,255,0.2)", margin: 0 }}>
+                MP4, MOV, MKV, WebM supported
+              </p>
+              <input
+                id="video-input"
+                type="file"
+                accept="video/mp4,video/quicktime,video/x-matroska,video/webm"
+                onChange={handleFileInput}
+                style={{ display: "none" }}
+              />
             </div>
-            <input type="text" value={videoUrl} onChange={(e) => setVideoUrl(e.target.value)}
-              placeholder="https://www.youtube.com/watch?v=..."
-              style={inputStyle} />
-            <div style={{ marginTop: 10, fontSize: 11, color: "rgba(255,255,255,0.2)", lineHeight: 1.5 }}>
-              Supports: youtube.com/watch, youtu.be, /shorts/, /embed/, /live/ links or raw video ID
+          ) : transcribing ? (
+            <div style={cardStyle}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+                <Loader2 size={18} className="spinner" style={{ color: "#f72585" }} />
+                <span style={{ fontSize: 14, fontWeight: 700, color: "#fff" }}>
+                  {progressLabel[transcribeProgress?.phase] || "Processing..."}
+                </span>
+              </div>
+              <div style={{
+                height: 6, background: "rgba(255,255,255,0.06)", borderRadius: 3,
+                overflow: "hidden", marginBottom: 8,
+              }}>
+                <div style={{
+                  height: "100%", width: `${transcribeProgress?.percent || 0}%`,
+                  background: "linear-gradient(90deg, #f72585, #7209b7)",
+                  borderRadius: 3, transition: "width 0.3s",
+                }} />
+              </div>
+              <div style={{ fontSize: 11, color: "rgba(255,255,255,0.3)", fontFamily: "'Space Mono', monospace" }}>
+                {transcribeProgress?.phase === "loading-model"
+                  ? "First-time download ~145MB (cached after)"
+                  : transcribeProgress?.phase === "transcribing"
+                    ? "This may take a few minutes for long videos"
+                    : ""}
+              </div>
             </div>
-          </div>
-
-          <button onClick={analyzeVideo} disabled={loading || !videoId} style={btn(!!videoId && !loading)}>
-            {loading ? <><Loader2 size={14} className="spinner" /> Analyzing...</> : "Analyze Video →"}
-          </button>
+          ) : transcriptData ? (
+            <div style={cardStyle}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <div style={{
+                  width: 36, height: 36, borderRadius: 10,
+                  background: "rgba(114,9,183,0.2)", display: "flex",
+                  alignItems: "center", justifyContent: "center", fontSize: 16,
+                }}>✅</div>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: "#fff" }}>
+                    {videoFile.name}
+                  </div>
+                  <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", fontFamily: "'Space Mono', monospace" }}>
+                    {formatSize(videoFile.size)} · {formatTimestamp(transcriptData.duration)}
+                    · {transcriptData.segments.length} segments
+                  </div>
+                </div>
+                <button
+                  onClick={() => { setVideoFile(null); setTranscriptData(null); setNicheAnalysis(null); setStep(0) }}
+                  disabled={loading}
+                  style={{
+                    background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)",
+                    color: loading ? "rgba(255,255,255,0.2)" : "rgba(255,255,255,0.5)",
+                    borderRadius: 8, padding: "6px 12px",
+                    fontSize: 11, cursor: loading ? "not-allowed" : "pointer",
+                    fontFamily: "'Space Mono', monospace",
+                  }}
+                >Change</button>
+              </div>
+            </div>
+          ) : null}
         </div>
       )}
 
@@ -608,16 +507,25 @@ export default function ThumbCraft() {
       {step === 1 && nicheAnalysis && (
         <div>
           <div style={{ display: "flex", gap: 20, marginBottom: 24, flexWrap: "wrap" }}>
-            {videoThumbnail && (
+            {videoFile && transcriptData && (
               <div style={{ width: 240, flexShrink: 0 }}>
-                <div style={{ borderRadius: 12, overflow: "hidden", border: "1px solid rgba(255,255,255,0.08)" }}>
-                  <img src={videoThumbnail.preview} alt="Video thumbnail" style={{ width: "100%", display: "block" }} />
+                <div style={{
+                  borderRadius: 12, overflow: "hidden",
+                  border: "1px solid rgba(255,255,255,0.08)",
+                  background: "#0a0a14", aspectRatio: "16/9",
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                }}>
+                  <video
+                    src={URL.createObjectURL(videoFile)}
+                    style={{ maxWidth: "100%", maxHeight: "100%", display: "block" }}
+                    controls
+                    preload="metadata"
+                  />
                 </div>
-                {videoTitle && (
-                  <div style={{ marginTop: 8, fontSize: 11, color: "rgba(255,255,255,0.4)", lineHeight: 1.4 }}>
-                    {videoTitle}
-                  </div>
-                )}
+                <div style={{ marginTop: 8, fontSize: 11, color: "rgba(255,255,255,0.4)", lineHeight: 1.4, fontFamily: "'Space Mono', monospace" }}>
+                  {videoFile.name}<br />
+                  {formatSize(videoFile.size)} · {formatTimestamp(transcriptData.duration)}
+                </div>
               </div>
             )}
 
@@ -628,7 +536,7 @@ export default function ThumbCraft() {
                 </div>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 12 }}>
                   <Tag>{nicheAnalysis.niche?.primary_category}</Tag>
-                  <Tag>{(nicheAnalysis.niche?.subcategory)}</Tag>
+                  <Tag>{nicheAnalysis.niche?.subcategory}</Tag>
                 </div>
                 <div style={{ fontSize: 12, color: "rgba(255,255,255,0.55)", marginBottom: 12, lineHeight: 1.6 }}>
                   <strong style={{ color: "rgba(255,255,255,0.7)" }}>Audience:</strong> {nicheAnalysis.niche?.audience}
@@ -656,43 +564,10 @@ export default function ThumbCraft() {
             </div>
           </div>
 
-          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-            <button onClick={openFrameSelection} disabled={loading || framesLoading}
-              style={btn(!loading && !framesLoading)}>
-              {framesLoading ? <><Loader2 size={14} className="spinner" /> Loading frames...</> : <><Video size={14} /> Choose Frames →</>}
-            </button>
-            <span style={{ fontSize: 11, color: "rgba(255,255,255,0.2)", fontFamily: "'Space Mono', monospace" }}>or</span>
-            <button onClick={researchCompetition}
-              style={{
-                background: "transparent", border: "1px solid rgba(255,255,255,0.12)",
-                color: "rgba(255,255,255,0.5)", borderRadius: 12,
-                padding: "13px 22px", fontSize: 13, fontWeight: 600, cursor: "pointer",
-                fontFamily: "'Space Mono', monospace", transition: "all 0.3s",
-              }}>
-              <Search size={14} style={{ verticalAlign: "middle", marginRight: 6 }} />
-              Research Competition
-            </button>
-          </div>
-
-          {styleAnalysis && (
-            <div style={{ ...cardStyle, marginTop: 16, borderColor: "rgba(114,9,183,0.2)", background: "rgba(114,9,183,0.04)" }}>
-              <div style={{ fontSize: 10, fontWeight: 700, color: "#a78bfa", marginBottom: 8, fontFamily: "'Space Mono', monospace", letterSpacing: "0.1em" }}>
-                COMPETITOR STYLE ANALYSIS
-              </div>
-              <p style={{ fontSize: 13, color: "rgba(255,255,255,0.6)", lineHeight: 1.7, margin: 0 }}>
-                {styleAnalysis.differentiation_opportunity}
-              </p>
-              {styleAnalysis.style_tags && (
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 10 }}>
-                  {styleAnalysis.style_tags.map((t, i) => (
-                    <span key={i} style={{ background: "rgba(247,37,133,0.08)", color: "#f72585", padding: "3px 10px", borderRadius: 20, fontSize: 11, fontWeight: 600 }}>
-                      #{t.replace(/\s+/g, "")}
-                    </span>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
+          <button onClick={openFrameSelection} disabled={loading || framesLoading}
+            style={btn(!loading && !framesLoading)}>
+            {framesLoading ? <><Loader2 size={14} className="spinner" /> Analyzing frames...</> : <>Choose Frames →</>}
+          </button>
         </div>
       )}
 
@@ -706,141 +581,62 @@ export default function ThumbCraft() {
                 Analyzing transcript for frame recommendations...
               </p>
             </div>
-          ) : frameRecs && frameRecs.length > 0 ? (
+          ) : (
             <div>
               <div style={{ marginBottom: 22 }}>
                 <h2 style={{ fontSize: 16, fontWeight: 700, color: "#fff", margin: "0 0 4px" }}>
-                  Pick a Frame
+                  Capture a Frame
                 </h2>
                 <p style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", margin: 0 }}>
-                  AI-recommended moments — use the scrub slider to fine-tune &plusmn;10s
+                  Browse your video frame by frame. Press <kbd style={kbdStyle}>C</kbd> to capture, click a frame to use it.
+                  {frameRecs?.length > 0 && " Pink dots on the timeline mark AI-recommended moments."}
                 </p>
               </div>
 
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(380px, 1fr))", gap: 20, marginBottom: 32 }}>
-                {frameRecs.map((rec, i) => {
-                  const currentDataUrl = frameDataUrls[i]
-                  const currentOffset = sliderOffsets[i] ?? 0
-                  const extractErr = extractErrors[i]
-                  const adjustedTs = Math.max(0, rec.timestamp + currentOffset)
-                  const dur = videoDuration || getVideoDuration(transcript)
-
-                  return (
-                    <div key={i} style={cardStyle}>
-                      <div style={{ fontSize: 13, fontWeight: 600, color: "#fff", marginBottom: 4 }}>
-                        {rec.description}
-                      </div>
-                      <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", marginBottom: 10, lineHeight: 1.4, fontFamily: "'Space Mono', monospace" }}>
-                        <span style={{ color: "rgba(255,255,255,0.5)" }}>{formatTimestamp(adjustedTs)}</span>
-                        {" \u2014 "}{rec.reason}
-                      </div>
-
-                      {/* Frame preview */}
-                      <div style={{ position: "relative", borderRadius: 10, overflow: "hidden", marginBottom: 10, border: "1px solid rgba(255,255,255,0.08)", background: "#0a0a14", aspectRatio: "16/9", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                        {currentDataUrl ? (
-                          <>
-                            <img src={currentDataUrl} alt="Storyboard frame" style={{ maxWidth: "100%", maxHeight: "100%", display: "block", imageRendering: "auto" }} />
-                            {isExtracting && (
-                              <div style={{ position: "absolute", top: 6, right: 6 }}>
-                                <Loader2 size={14} className="spinner" style={{ color: "rgba(255,255,255,0.4)" }} />
-                              </div>
-                            )}
-                          </>
-                        ) : extractErr ? (
-                          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6, fontSize: 11, color: "rgba(255,255,255,0.3)", padding: 20, textAlign: "center" }}>
-                            <AlertCircle size={16} style={{ opacity: 0.4 }} />
-                            Frame extraction unavailable<br />
-                            <span style={{ fontSize: 10, color: "rgba(255,255,255,0.15)" }}>Storyboard not available for this video</span>
-                          </div>
-                        ) : (
-                          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
-                            <Loader2 size={20} className="spinner" style={{ color: "rgba(255,255,255,0.3)" }} />
-                            <span style={{ fontSize: 10, color: "rgba(255,255,255,0.2)", fontFamily: "'Space Mono', monospace" }}>loading frame...</span>
-                          </div>
-                        )}
-                      </div>
-
-                      {/* Scrub slider */}
-                      <div style={{ marginBottom: 10 }}>
-                        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "rgba(255,255,255,0.3)", fontFamily: "'Space Mono', monospace", marginBottom: 4 }}>
-                          <span>{formatTimestamp(Math.max(0, rec.timestamp - 10))}</span>
-                          <span style={{ color: currentOffset !== 0 ? "#f72585" : "rgba(255,255,255,0.4)", fontWeight: currentOffset !== 0 ? 700 : 400 }}>
-                            {currentOffset >= 0 ? "+" : ""}{currentOffset.toFixed(1)}s
-                          </span>
-                          <span>{formatTimestamp(Math.min(dur, rec.timestamp + 10))}</span>
-                        </div>
-                        <input
-                          type="range"
-                          min={-10}
-                          max={10}
-                          step={0.5}
-                          value={currentOffset}
-                          onChange={(e) => handleSliderChange(i, parseFloat(e.target.value), rec.timestamp)}
-                          style={{ width: "100%", margin: 0 }}
-                        />
-                      </div>
-
-                      <div style={{ fontSize: 11, color: "rgba(255,255,255,0.45)", marginBottom: 12, lineHeight: 1.5, padding: "8px 10px", background: "rgba(255,255,255,0.03)", borderRadius: 8, border: "1px solid rgba(255,255,255,0.06)" }}>
-                        <strong style={{ color: "rgba(255,255,255,0.6)" }}>Concept:</strong> {rec.thumbnail_concept}
-                      </div>
-
-                      <button
-                        onClick={() => handleSelectFrame(i)}
-                        disabled={isExtracting}
-                        style={{
-                          ...btn(true), width: "100%", justifyContent: "center",
-                          background: "linear-gradient(135deg, #f72585, #7209b7)",
-                          opacity: isExtracting ? 0.5 : 1,
-                        }}>
-                        {isExtracting && !currentDataUrl ? <><Loader2 size={14} className="spinner" /> Loading frame...</> : "Use This Frame \u2192"}
-                      </button>
-                    </div>
-                  )
-                })}
-              </div>
-
-              {conceptIdeas.length > 0 && (
-                <div style={{ marginBottom: 22 }}>
-                  <h2 style={{ fontSize: 16, fontWeight: 700, color: "#fff", margin: "0 0 4px" }}>
-                    Concept Ideas (No Reference Frame)
-                  </h2>
-                  <p style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", margin: 0 }}>
-                    Text-only concepts that work without a specific video frame
-                  </p>
-                </div>
+              {videoFile && (
+                <FramePicker
+                  videoFile={videoFile}
+                  recommendedTimestamps={frameRecs?.map((r) => r.timestamp) || []}
+                  onSelectFrame={handleFrameCaptured}
+                />
               )}
 
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: 16, marginBottom: 24 }}>
-                {conceptIdeas.map((concept, i) => (
-                  <div key={`c-${i}`} style={{ ...cardStyle, borderColor: "rgba(114,9,183,0.2)", background: "rgba(114,9,183,0.04)" }}>
-                    <div style={{ fontSize: 15, fontWeight: 700, color: "#a78bfa", marginBottom: 6 }}>
-                      💡 {concept.title}
-                    </div>
-                    <div style={{ fontSize: 13, color: "rgba(255,255,255,0.65)", lineHeight: 1.6, marginBottom: 10 }}>
-                      {concept.description}
-                    </div>
-                    <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", marginBottom: 14, lineHeight: 1.5 }}>
-                      {concept.reason}
-                    </div>
-                    <button onClick={() => handleSelectConcept(i)}
-                      style={{
-                        ...btn(true), width: "100%", justifyContent: "center",
-                        background: "linear-gradient(135deg, #7209b7, #b5179e)",
-                      }}>
-                      <Sparkles size={14} /> Generate from Concept
-                    </button>
+              {/* Concept ideas (no reference frame) */}
+              {conceptIdeas.length > 0 && (
+                <div style={{ marginTop: 32 }}>
+                  <div style={{ marginBottom: 16 }}>
+                    <h2 style={{ fontSize: 16, fontWeight: 700, color: "#fff", margin: "0 0 4px" }}>
+                      Concept Ideas (No Reference Frame)
+                    </h2>
+                    <p style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", margin: 0 }}>
+                      Text-only concepts that work without a specific video frame
+                    </p>
                   </div>
-                ))}
-              </div>
-            </div>
-          ) : (
-            <div style={{ textAlign: "center", padding: "40px 20px" }}>
-              <p style={{ fontSize: 14, color: "rgba(255,255,255,0.4)", marginBottom: 16 }}>
-                Failed to analyze frames. Try again.
-              </p>
-              <button onClick={openFrameSelection} style={btn(true)}>
-                <RefreshCw size={14} /> Retry Frame Analysis
-              </button>
+
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: 16, marginBottom: 24 }}>
+                    {conceptIdeas.map((concept, i) => (
+                      <div key={`c-${i}`} style={{ ...cardStyle, borderColor: "rgba(114,9,183,0.2)", background: "rgba(114,9,183,0.04)" }}>
+                        <div style={{ fontSize: 15, fontWeight: 700, color: "#a78bfa", marginBottom: 6 }}>
+                          💡 {concept.title}
+                        </div>
+                        <div style={{ fontSize: 13, color: "rgba(255,255,255,0.65)", lineHeight: 1.6, marginBottom: 10 }}>
+                          {concept.description}
+                        </div>
+                        <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", marginBottom: 14, lineHeight: 1.5 }}>
+                          {concept.reason}
+                        </div>
+                        <button onClick={() => handleSelectConcept(i)}
+                          style={{
+                            ...btn(true), width: "100%", justifyContent: "center",
+                            background: "linear-gradient(135deg, #7209b7, #b5179e)",
+                          }}>
+                          <Sparkles size={14} /> Generate from Concept
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -904,7 +700,7 @@ export default function ThumbCraft() {
                     padding: "13px 22px", fontSize: 13, fontWeight: 600, cursor: "pointer",
                     fontFamily: "'Space Mono', monospace",
                   }}>
-                  ← Pick Different Frame
+                  ← Capture Different Frame
                 </button>
               </div>
             </div>
@@ -975,7 +771,7 @@ export default function ThumbCraft() {
       )}
 
       <div style={{ marginTop: 48, paddingTop: 16, borderTop: "1px solid rgba(255,255,255,0.04)", fontSize: 10, color: "rgba(255,255,255,0.15)", fontFamily: "'Space Mono', monospace" }}>
-        Powered by OpenRouter · YouTube Data API · Fabric.js · 1280×720
+        Powered by Whisper.js · OpenRouter · Fabric.js · 100% in-browser
       </div>
 
       <style>{`
@@ -997,4 +793,10 @@ function Tag({ children }) {
       {children}
     </span>
   )
+}
+
+const kbdStyle = {
+  background: "rgba(255,255,255,0.08)", borderRadius: 4,
+  padding: "1px 6px", fontSize: 11, fontFamily: "'Space Mono', monospace",
+  color: "#fff", border: "1px solid rgba(255,255,255,0.15)",
 }

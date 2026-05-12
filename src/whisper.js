@@ -26,6 +26,8 @@ export async function transcribeVideo(file, onProgress) {
 
   onProgress?.({ phase: 'loading-model', percent: 0 })
   const pipe = await pipeline('automatic-speech-recognition', MODEL, {
+    dtype: 'fp32',
+    session_options: { graphOptimizationLevel: 'disabled' },
     progress_callback: (p) => {
       if (p.status === 'progress') {
         onProgress?.({ phase: 'loading-model', percent: Math.round(p.progress * 100) })

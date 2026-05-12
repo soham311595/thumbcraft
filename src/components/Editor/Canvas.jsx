@@ -191,7 +191,7 @@ const Canvas = forwardRef(function Canvas({ initialImageUrl, onSelectionChange, 
       preserveObjectStacking: true,
     })
     c.setZoom(scale)
-    c.setDimensions({ width: CANVAS_W * scale, height: CANVAS_H * scale })
+    c.setDimensions({ width: CANVAS_W * scale, height: CANVAS_H * scale }, { cssOnly: true })
     fabricRef.current = c
     setReady(true)
 

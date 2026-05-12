@@ -257,7 +257,7 @@ export default function ThumbCraft() {
     sliderDebounceRef.current[recIndex] = setTimeout(() => {
       const adjustedTs = Math.max(0, baseTimestamp + offset)
       extractSingleFrame(recIndex, adjustedTs, null, null)
-    }, 300)
+    }, 100)
   }
 
   // ─── Step 2: Open Frame Selection ───────────────────────
@@ -398,9 +398,9 @@ export default function ThumbCraft() {
       if (selectedFrameTimestamp != null && selectedFrameDataUrl) {
         const rec = frameRecs?.find((r) => Math.abs(r.timestamp - selectedFrameTimestamp) < 11)
         const concept = rec?.thumbnail_concept || ""
-        promptText = `Use this video frame as the visual starting point for a YouTube thumbnail. Keep the subject and composition of the frame but enhance it with bold colors, dramatic lighting, and text overlay.\n\nTHUMBNAIL CONCEPT: ${concept}\n\n${IMAGE_PROMPT_GENERATOR(nicheAnalysis, styleAnalysis, 0)}`
+        promptText = `Use this video frame as the visual starting point for a YouTube thumbnail. Keep the subject and composition of the frame but enhance it with bold colors, dramatic lighting, and text overlay. This MUST be a HIGH-CTR thumbnail that creates a curiosity gap — make viewers feel they NEED to click to find out what's inside.\n\nTHUMBNAIL CONCEPT: ${concept}\n\n${IMAGE_PROMPT_GENERATOR(nicheAnalysis, styleAnalysis, 0)}`
       } else {
-        promptText = `Create a YouTube thumbnail based on this concept (no video frame reference needed).\n\nCONCEPT: ${selectedConceptTitle || ""}\n\n${IMAGE_PROMPT_GENERATOR(nicheAnalysis, styleAnalysis, 0)}`
+        promptText = `Create a YouTube thumbnail based on this concept (no video frame reference needed). This MUST be a HIGH-CTR thumbnail that creates a curiosity gap — make viewers feel they NEED to click to find out what's inside.\n\nCONCEPT: ${selectedConceptTitle || ""}\n\n${IMAGE_PROMPT_GENERATOR(nicheAnalysis, styleAnalysis, 0)}`
       }
 
       const result = await generateThumbnail(promptText, null, selectedFrameDataUrl || undefined)
@@ -736,19 +736,26 @@ export default function ThumbCraft() {
                       </div>
 
                       {/* Frame preview */}
-                      <div style={{ position: "relative", borderRadius: 10, overflow: "hidden", marginBottom: 10, border: "1px solid rgba(255,255,255,0.08)", background: "#0a0a14", aspectRatio: "16/9" }}>
+                      <div style={{ position: "relative", borderRadius: 10, overflow: "hidden", marginBottom: 10, border: "1px solid rgba(255,255,255,0.08)", background: "#0a0a14", aspectRatio: "16/9", display: "flex", alignItems: "center", justifyContent: "center" }}>
                         {currentDataUrl ? (
-                          <img src={currentDataUrl} alt="Storyboard frame" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+                          <>
+                            <img src={currentDataUrl} alt="Storyboard frame" style={{ maxWidth: "100%", maxHeight: "100%", display: "block", imageRendering: "auto" }} />
+                            {isExtracting && (
+                              <div style={{ position: "absolute", top: 6, right: 6 }}>
+                                <Loader2 size={14} className="spinner" style={{ color: "rgba(255,255,255,0.4)" }} />
+                              </div>
+                            )}
+                          </>
                         ) : extractErr ? (
-                          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", fontSize: 11, color: "rgba(255,255,255,0.3)", padding: 20, textAlign: "center" }}>
-                            <div>
-                              <AlertCircle size={16} style={{ margin: "0 auto 6px", display: "block", opacity: 0.4 }} />
-                              Frame extraction unavailable
-                            </div>
+                          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6, fontSize: 11, color: "rgba(255,255,255,0.3)", padding: 20, textAlign: "center" }}>
+                            <AlertCircle size={16} style={{ opacity: 0.4 }} />
+                            Frame extraction unavailable<br />
+                            <span style={{ fontSize: 10, color: "rgba(255,255,255,0.15)" }}>Storyboard not available for this video</span>
                           </div>
                         ) : (
-                          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%" }}>
-                            <Loader2 size={20} className="spinner" style={{ color: "rgba(255,255,255,0.2)" }} />
+                          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
+                            <Loader2 size={20} className="spinner" style={{ color: "rgba(255,255,255,0.3)" }} />
+                            <span style={{ fontSize: 10, color: "rgba(255,255,255,0.2)", fontFamily: "'Space Mono', monospace" }}>loading frame...</span>
                           </div>
                         )}
                       </div>

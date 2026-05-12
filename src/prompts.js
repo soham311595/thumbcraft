@@ -90,9 +90,9 @@ RULES:
 
 export const IMAGE_PROMPT_GENERATOR = (niche, style, variationIndex) => {
   const angles = [
-    `Create a YouTube thumbnail INSPIRED BY but VISUALLY DISTINCT from typical ${niche.niche?.subcategory} thumbnails.`,
-    `Create a YouTube thumbnail that BREAKS THE PATTERN of typical ${niche.niche?.subcategory} thumbnails while still signaling the niche.`,
-    `Create a YouTube thumbnail with a CINEMATIC, editorial, high-production feel for ${niche.niche?.subcategory}.`,
+    `Create a HIGH-CTR YouTube thumbnail INSPIRED BY but VISUALLY DISTINCT from typical ${niche.niche?.subcategory} thumbnails. Design for a curiosity gap — viewers feel compelled to click.`,
+    `Create a HIGH-CTR YouTube thumbnail that BREAKS THE PATTERN of typical ${niche.niche?.subcategory} thumbnails while still signaling the niche. Must create a curiosity gap that drives clicks.`,
+    `Create a HIGH-CTR YouTube thumbnail with a CINEMATIC, editorial, high-production feel for ${niche.niche?.subcategory}. The composition should create a curiosity gap that demands a click.`,
   ]
 
   return `${angles[variationIndex]}
@@ -111,7 +111,9 @@ REQUIREMENTS:
 - High contrast, readable at small thumbnail size
 - Text "${niche.thumbnail_strategy?.text_overlay ?? ''}" must appear prominently
 - No generic stock photo feel
-- Photorealistic or high-quality graphic style`
+- Photorealistic or high-quality graphic style
+- Creates a CURIOSITY GAP — viewer needs to click to find out more
+- HIGH CTR design: bold, punchy, impossible to scroll past`
 }
 
 

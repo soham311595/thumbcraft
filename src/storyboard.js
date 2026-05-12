@@ -80,13 +80,23 @@ export function findFrame(levels, timestampSec) {
   return { levelIndex: level.index, frameIndex: fi, level }
 }
 
-function loadImage(url) {
+async function loadImage(url) {
+  const resp = await fetch(`/api/sprite?url=${encodeURIComponent(url)}`)
+  if (!resp.ok) throw new Error(`Sprite fetch failed: ${resp.status}`)
+  const blob = await resp.blob()
+  const blobUrl = URL.createObjectURL(blob)
+
   return new Promise((resolve, reject) => {
     const img = new Image()
-    img.crossOrigin = 'anonymous'
-    img.onload = () => resolve(img)
-    img.onerror = () => reject(new Error(`Failed to load storyboard sprite`))
-    img.src = `/api/sprite?url=${encodeURIComponent(url)}`
+    img.onload = () => {
+      URL.revokeObjectURL(blobUrl)
+      resolve(img)
+    }
+    img.onerror = () => {
+      URL.revokeObjectURL(blobUrl)
+      reject(new Error('Failed to decode sprite'))
+    }
+    img.src = blobUrl
   })
 }
 
@@ -100,7 +110,13 @@ export async function extractFrame(videoId, spec, timestampSec, videoDurationSec
   const { levelIndex, frameIndex } = result
   const { url, x, y, w, h } = getFrameInfo(parsed, levelIndex, frameIndex, videoId)
 
-  const img = await loadImage(url)
+  let img
+  try {
+    img = await loadImage(url)
+  } catch (e) {
+    console.error('Sprite load failed for URL:', url.slice(0, 120))
+    throw e
+  }
 
   const canvas = document.createElement('canvas')
   canvas.width = w

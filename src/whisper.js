@@ -1,6 +1,6 @@
 import { pipeline } from '@huggingface/transformers'
 
-const MODEL = 'Xenova/whisper-base'
+const MODEL = 'Xenova/whisper-tiny'
 
 async function extractAudioData(file) {
   const buffer = await file.arrayBuffer()

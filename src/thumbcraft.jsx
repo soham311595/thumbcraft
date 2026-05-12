@@ -287,7 +287,7 @@ export default function ThumbCraft() {
 
   const progressLabel = {
     "extracting-audio": "Extracting audio from video...",
-    "loading-model": "Downloading Whisper model (145MB, cached after first use)...",
+    "loading-model": "Downloading Whisper model (75MB, cached after first use)...",
     "transcribing": "Transcribing audio...",
   }
 
@@ -463,7 +463,7 @@ export default function ThumbCraft() {
               </div>
               <div style={{ fontSize: 11, color: "rgba(255,255,255,0.3)", fontFamily: "'Space Mono', monospace" }}>
                 {transcribeProgress?.phase === "loading-model"
-                  ? "First-time download ~145MB (cached after)"
+                  ? "First-time download ~75MB (cached after)"
                   : transcribeProgress?.phase === "transcribing"
                     ? "This may take a few minutes for long videos"
                     : ""}

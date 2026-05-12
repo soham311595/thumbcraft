@@ -250,6 +250,58 @@ export default defineConfig({
             return;
           }
 
+          if (url.pathname === "/api/sprite") {
+            const spriteUrl = url.searchParams.get("url");
+            if (!spriteUrl) {
+              res.statusCode = 400;
+              res.setHeader("Content-Type", "application/json");
+              res.end(JSON.stringify({ error: "Missing url param" }));
+              return;
+            }
+            try {
+              const resp = await fetch(spriteUrl);
+              if (!resp.ok) {
+                res.statusCode = resp.status;
+                res.setHeader("Content-Type", "application/json");
+                res.end(JSON.stringify({ error: "Sprite fetch failed" }));
+                return;
+              }
+              const buffer = await resp.arrayBuffer();
+              res.statusCode = 200;
+              res.setHeader("Access-Control-Allow-Origin", "*");
+              res.setHeader("Content-Type", resp.headers.get("Content-Type") || "image/webp");
+              res.setHeader("Cache-Control", "public, max-age=3600");
+              res.end(Buffer.from(buffer));
+            } catch (error) {
+              res.statusCode = 500;
+              res.setHeader("Content-Type", "application/json");
+              res.end(JSON.stringify({ error: error.message }));
+            }
+            return;
+          }
+
+          if (url.pathname === "/api/player") {
+            const videoId = url.searchParams.get("vid") || url.searchParams.get("videoId");
+            if (!videoId) {
+              res.statusCode = 400;
+              res.setHeader("Content-Type", "application/json");
+              res.end(JSON.stringify({ error: "Missing videoId" }));
+              return;
+            }
+            try {
+              const { fetchPlayerData } = await import("./api/player.js");
+              const data = await fetchPlayerData(videoId);
+              res.statusCode = 200;
+              res.setHeader("Content-Type", "application/json");
+              res.end(JSON.stringify(data));
+            } catch (error) {
+              res.statusCode = 500;
+              res.setHeader("Content-Type", "application/json");
+              res.end(JSON.stringify({ error: error.message }));
+            }
+            return;
+          }
+
           next();
         });
       },

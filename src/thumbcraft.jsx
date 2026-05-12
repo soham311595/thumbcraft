@@ -17,6 +17,7 @@ import {
   Search,
   Video,
 } from "lucide-react"
+import { extractFrameByIndex } from "./storyboard"
 import Canvas from "./components/Editor/Canvas"
 import { Toolbar } from "./components/Editor/Toolbar"
 import { LayersPanel } from "./components/Editor/LayersPanel"
@@ -98,23 +99,6 @@ function getVideoDuration(segments) {
   return segments[segments.length - 1].start + segments[segments.length - 1].duration
 }
 
-const AUTO_THUMBNAIL_INTERVALS = [0, 0.25, 0.5, 0.75]
-
-function getAutoThumbnailIndex(timestampSec, durationSec) {
-  if (!durationSec) return 0
-  const ratio = timestampSec / durationSec
-  let closest = 0
-  let closestDist = Infinity
-  for (let i = 0; i < AUTO_THUMBNAIL_INTERVALS.length; i++) {
-    const dist = Math.abs(ratio - AUTO_THUMBNAIL_INTERVALS[i])
-    if (dist < closestDist) {
-      closestDist = dist
-      closest = i
-    }
-  }
-  return closest
-}
-
 function Stepper({ step, onStep, steps, labels }) {
   return (
     <div style={{ display: "flex", gap: 4, alignItems: "center", marginBottom: 28, flexWrap: "wrap" }}>
@@ -168,8 +152,14 @@ export default function ThumbCraft() {
   // Step 2 — Frame Selection
   const [frameRecs, setFrameRecs] = useState(null)
   const [conceptIdeas, setConceptIdeas] = useState([])
-  const [selectedThumbnailIndex, setSelectedThumbnailIndex] = useState({})
   const [framesLoading, setFramesLoading] = useState(false)
+  const sliderDebounceRef = useRef({})
+  const [storyboardSpec, setStoryboardSpec] = useState(null)
+  const [frameDataUrls, setFrameDataUrls] = useState({})
+  const [sliderOffsets, setSliderOffsets] = useState({})
+  const [isExtracting, setIsExtracting] = useState(false)
+  const [extractErrors, setExtractErrors] = useState({})
+  const [videoDuration, setVideoDuration] = useState(0)
 
   // Step 3 — Generate
   const [selectedFrameTimestamp, setSelectedFrameTimestamp] = useState(null)
@@ -226,6 +216,45 @@ export default function ThumbCraft() {
     }
   }
 
+  // ─── Extract a single frame from storyboard ────────────
+  const extractSingleFrame = async (recIndex, timestamp, spec, dur) => {
+    const s = spec || storyboardSpec
+    const d = dur || videoDuration || getVideoDuration(transcript)
+    if (!s || !videoId) {
+      setExtractErrors((prev) => ({ ...prev, [recIndex]: "Storyboard not available" }))
+      return
+    }
+    try {
+      const dataUrl = await extractFrameByIndex(videoId, s, timestamp, d)
+      if (dataUrl) {
+        setFrameDataUrls((prev) => ({ ...prev, [recIndex]: dataUrl }))
+        setExtractErrors((prev) => {
+          const next = { ...prev }
+          delete next[recIndex]
+          return next
+        })
+      } else {
+        throw new Error("Extraction returned null")
+      }
+    } catch (e) {
+      setExtractErrors((prev) => ({ ...prev, [recIndex]: e.message }))
+    }
+  }
+
+  // ─── Debounced slider change handler ────────────────
+  const handleSliderChange = (recIndex, offset, baseTimestamp) => {
+    const newSlider = { ...sliderOffsets, [recIndex]: offset }
+    setSliderOffsets(newSlider)
+
+    if (sliderDebounceRef.current[recIndex]) {
+      clearTimeout(sliderDebounceRef.current[recIndex])
+    }
+    sliderDebounceRef.current[recIndex] = setTimeout(() => {
+      const adjustedTs = Math.max(0, baseTimestamp + offset)
+      extractSingleFrame(recIndex, adjustedTs, null, null)
+    }, 300)
+  }
+
   // ─── Step 2: Open Frame Selection ───────────────────────
   const openFrameSelection = async () => {
     if (!nicheAnalysis || !videoId || !transcript) return
@@ -233,23 +262,46 @@ export default function ThumbCraft() {
     setError("")
     setStatus("Loading storyboard and analyzing frames...")
     setStep(2)
+    setStoryboardSpec(null)
+    setFrameDataUrls({})
+    setSliderOffsets({})
+    setExtractErrors({})
 
     try {
+      setStatus("Fetching storyboard data...")
+      let spec = ""
+      let duration = getVideoDuration(transcript)
+      try {
+        const playerResp = await fetch(`/api/player?vid=${videoId}`)
+        if (playerResp.ok) {
+          const playerData = await playerResp.json()
+          spec = playerData.spec || ""
+          if (playerData.duration) duration = playerData.duration
+        } else {
+          console.warn("Player API failed, falling back:", playerResp.status)
+        }
+      } catch (e) {
+        console.warn("Player fetch failed, falling back:", e.message)
+      }
+      setStoryboardSpec(spec)
+      setVideoDuration(duration)
+
       setStatus("Analyzing transcript for frame recommendations...")
       const frameResult = await analyzeText(
         FRAME_RECOMMENDATION_PROMPT(transcript, nicheAnalysis),
       )
 
       const recs = frameResult.recommended_frames || []
-      const duration = getVideoDuration(transcript)
-      const thumbIdx = {}
-      for (let i = 0; i < recs.length; i++) {
-        thumbIdx[i] = getAutoThumbnailIndex(recs[i].timestamp, duration)
-      }
 
       setFrameRecs(recs)
       setConceptIdeas(frameResult.concept_ideas || [])
-      setSelectedThumbnailIndex(thumbIdx)
+
+      setIsExtracting(true)
+      const extractPromises = recs.map((rec, i) =>
+        extractSingleFrame(i, rec.timestamp, spec || null, duration),
+      )
+      await Promise.allSettled(extractPromises)
+      setIsExtracting(false)
     } catch (e) {
       console.error("Frame analysis error:", e)
       setError("Frame analysis failed: " + e.message)
@@ -260,18 +312,24 @@ export default function ThumbCraft() {
     }
   }
 
-  // ─── Select Frame (auto-thumbnail) ──────────────────────
-  const handleSelectFrame = async (recIndex, thumbIndex) => {
+  // ─── Select Frame (storyboard) ──────────────────────────
+  const handleSelectFrame = async (recIndex) => {
     const rec = frameRecs[recIndex]
-    const duration = getVideoDuration(transcript)
-    const url = `https://img.youtube.com/vi/${videoId}/${thumbIndex}.jpg`
-    const ts = duration ? (thumbIndex / 4) * duration : rec.timestamp
+    const offset = sliderOffsets[recIndex] || 0
+    const ts = Math.max(0, rec.timestamp + offset)
 
-    try {
-      const dataUrl = await loadImageAsDataUrl(url)
+    const dataUrl = frameDataUrls[recIndex]
+    if (dataUrl) {
       setSelectedFrameDataUrl(dataUrl)
-    } catch {
-      setSelectedFrameDataUrl(url)
+    } else {
+      try {
+        const loaded = await loadImageAsDataUrl(
+          `https://img.youtube.com/vi/${videoId}/0.jpg`,
+        )
+        setSelectedFrameDataUrl(loaded)
+      } catch {
+        setSelectedFrameDataUrl(`https://img.youtube.com/vi/${videoId}/0.jpg`)
+      }
     }
 
     setSelectedFrameTimestamp(ts)
@@ -650,70 +708,80 @@ export default function ThumbCraft() {
                   Pick a Frame
                 </h2>
                 <p style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", margin: 0 }}>
-                  AI-recommended moments from your video — choose the closest auto-thumbnail
+                  AI-recommended moments — use the scrub slider to fine-tune &plusmn;10s
                 </p>
               </div>
 
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(360px, 1fr))", gap: 20, marginBottom: 32 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(380px, 1fr))", gap: 20, marginBottom: 32 }}>
                 {frameRecs.map((rec, i) => {
-                  const recommendedIdx = selectedThumbnailIndex[i] ?? 0
+                  const currentDataUrl = frameDataUrls[i]
+                  const currentOffset = sliderOffsets[i] ?? 0
+                  const extractErr = extractErrors[i]
+                  const adjustedTs = Math.max(0, rec.timestamp + currentOffset)
+                  const dur = videoDuration || getVideoDuration(transcript)
 
                   return (
                     <div key={i} style={cardStyle}>
-                      <div style={{ fontSize: 13, fontWeight: 600, color: "#fff", marginBottom: 6 }}>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: "#fff", marginBottom: 4 }}>
                         {rec.description}
                       </div>
-                      <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginBottom: 14, lineHeight: 1.5 }}>
-                        {rec.reason}
+                      <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", marginBottom: 10, lineHeight: 1.4, fontFamily: "'Space Mono', monospace" }}>
+                        <span style={{ color: "rgba(255,255,255,0.5)" }}>{formatTimestamp(adjustedTs)}</span>
+                        {" \u2014 "}{rec.reason}
                       </div>
 
-                      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 6, marginBottom: 12 }}>
-                        {[0, 1, 2, 3].map((tIdx) => {
-                          const isRec = tIdx === recommendedIdx
-                          const thumbUrl = `https://img.youtube.com/vi/${videoId}/${tIdx}.jpg`
-                          return (
-                            <div
-                              key={tIdx}
-                              onClick={() => handleSelectFrame(i, tIdx)}
-                              style={{
-                                cursor: "pointer", borderRadius: 8, overflow: "hidden",
-                                border: isRec ? "2px solid #f72585" : "2px solid transparent",
-                                outline: isRec ? "2px solid rgba(247,37,133,0.3)" : "none",
-                                transition: "all 0.15s", position: "relative",
-                              }}>
-                              <img
-                                src={thumbUrl}
-                                alt=""
-                                style={{ width: "100%", aspectRatio: "16/9", objectFit: "cover", display: "block" }}
-                                onError={(e) => { e.target.src = `https://img.youtube.com/vi/${videoId}/hqdefault.jpg` }}
-                              />
-                              {isRec && (
-                                <div style={{ position: "absolute", top: 3, left: 3, background: "#f72585", color: "#fff", fontSize: 8, fontWeight: 700, padding: "1px 5px", borderRadius: 4, fontFamily: "'Space Mono', monospace" }}>
-                                  AI
-                                </div>
-                              )}
+                      {/* Frame preview */}
+                      <div style={{ position: "relative", borderRadius: 10, overflow: "hidden", marginBottom: 10, border: "1px solid rgba(255,255,255,0.08)", background: "#0a0a14", aspectRatio: "16/9" }}>
+                        {currentDataUrl ? (
+                          <img src={currentDataUrl} alt="Storyboard frame" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+                        ) : extractErr ? (
+                          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", fontSize: 11, color: "rgba(255,255,255,0.3)", padding: 20, textAlign: "center" }}>
+                            <div>
+                              <AlertCircle size={16} style={{ margin: "0 auto 6px", display: "block", opacity: 0.4 }} />
+                              Frame extraction unavailable
                             </div>
-                          )
-                        })}
+                          </div>
+                        ) : (
+                          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%" }}>
+                            <Loader2 size={20} className="spinner" style={{ color: "rgba(255,255,255,0.2)" }} />
+                          </div>
+                        )}
                       </div>
 
-                      <div style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", marginBottom: 12, lineHeight: 1.5, padding: "8px 12px", background: "rgba(255,255,255,0.03)", borderRadius: 8, border: "1px solid rgba(255,255,255,0.06)" }}>
-                        <strong style={{ color: "rgba(255,255,255,0.7)" }}>Final concept:</strong> {rec.thumbnail_concept}
+                      {/* Scrub slider */}
+                      <div style={{ marginBottom: 10 }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "rgba(255,255,255,0.3)", fontFamily: "'Space Mono', monospace", marginBottom: 4 }}>
+                          <span>{formatTimestamp(Math.max(0, rec.timestamp - 10))}</span>
+                          <span style={{ color: currentOffset !== 0 ? "#f72585" : "rgba(255,255,255,0.4)", fontWeight: currentOffset !== 0 ? 700 : 400 }}>
+                            {currentOffset >= 0 ? "+" : ""}{currentOffset.toFixed(1)}s
+                          </span>
+                          <span>{formatTimestamp(Math.min(dur, rec.timestamp + 10))}</span>
+                        </div>
+                        <input
+                          type="range"
+                          min={-10}
+                          max={10}
+                          step={0.5}
+                          value={currentOffset}
+                          onChange={(e) => handleSliderChange(i, parseFloat(e.target.value), rec.timestamp)}
+                          style={{ width: "100%", margin: 0 }}
+                        />
                       </div>
 
-                      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 6 }}>
-                        {[0, 1, 2, 3].map((tIdx) => (
-                          <button
-                            key={tIdx}
-                            onClick={() => handleSelectFrame(i, tIdx)}
-                            style={{
-                              ...btn(true), padding: "8px 4px", fontSize: 10, justifyContent: "center",
-                              background: tIdx === recommendedIdx ? "linear-gradient(135deg, #f72585, #7209b7)" : "rgba(255,255,255,0.08)",
-                            }}>
-                            Use #{tIdx + 1}
-                          </button>
-                        ))}
+                      <div style={{ fontSize: 11, color: "rgba(255,255,255,0.45)", marginBottom: 12, lineHeight: 1.5, padding: "8px 10px", background: "rgba(255,255,255,0.03)", borderRadius: 8, border: "1px solid rgba(255,255,255,0.06)" }}>
+                        <strong style={{ color: "rgba(255,255,255,0.6)" }}>Concept:</strong> {rec.thumbnail_concept}
                       </div>
+
+                      <button
+                        onClick={() => handleSelectFrame(i)}
+                        disabled={isExtracting}
+                        style={{
+                          ...btn(true), width: "100%", justifyContent: "center",
+                          background: "linear-gradient(135deg, #f72585, #7209b7)",
+                          opacity: isExtracting ? 0.5 : 1,
+                        }}>
+                        {isExtracting && !currentDataUrl ? <><Loader2 size={14} className="spinner" /> Loading frame...</> : "Use This Frame \u2192"}
+                      </button>
                     </div>
                   )
                 })}

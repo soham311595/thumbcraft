@@ -314,13 +314,5 @@ export default defineConfig({
       },
     },
   ],
-  resolve: {
-    alias: {
-      sharp$: false,
-      "onnxruntime-node$": false,
-    },
-  },
-  optimizeDeps: {
-    exclude: ["@huggingface/transformers"],
-  },
+
 });

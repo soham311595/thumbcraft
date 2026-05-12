@@ -54,6 +54,36 @@ export default defineConfig({
             return;
           }
 
+          if (url.pathname === "/api/transcript") {
+            const videoId = url.searchParams.get("vid") || url.searchParams.get("videoId");
+            if (!videoId) {
+              res.statusCode = 400;
+              res.setHeader("Content-Type", "application/json");
+              res.end(JSON.stringify({ error: "Missing videoId" }));
+              return;
+            }
+
+            try {
+              const { fetchTranscript } = await import("youtube-transcript");
+              const segments = await fetchTranscript(videoId);
+              const normalized = segments.map((seg) => ({
+                text: seg.text,
+                start: seg.offset / 1000,
+                duration: seg.duration / 1000,
+              }));
+              res.statusCode = 200;
+              res.setHeader("Content-Type", "application/json");
+              res.end(JSON.stringify(normalized));
+            } catch (error) {
+              const msg = error.message || "";
+              const code = msg.includes("disabled") ? 403 : msg.includes("unavailable") || msg.includes("not found") ? 404 : 500;
+              res.statusCode = code;
+              res.setHeader("Content-Type", "application/json");
+              res.end(JSON.stringify({ error: msg || "Failed to fetch transcript" }));
+            }
+            return;
+          }
+
           if (url.pathname === "/api/generate-image") {
             if (req.method !== "POST") {
               res.statusCode = 405;

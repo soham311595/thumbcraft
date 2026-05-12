@@ -37,7 +37,9 @@ async function orChat(body) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
-  const data = await res.json();
+  const raw = await res.text();
+  let data;
+  try { data = JSON.parse(raw); } catch { throw new Error(raw.slice(0, 300)); }
   if (data.error) {
     const detail = data.error.metadata?.provider_name
       ? ` (${data.error.metadata.provider_name})`
@@ -123,7 +125,9 @@ export async function generateThumbnail(prompt, imageConfig, referenceImages = [
     body: JSON.stringify(body),
   });
 
-  const data = await res.json();
+  const raw = await res.text();
+  let data;
+  try { data = JSON.parse(raw); } catch { throw new Error(raw.slice(0, 300)); }
   if (!res.ok) throw new Error(data.error || "Image generation failed");
   return data;
 }

@@ -30,9 +30,14 @@ export default function Inspiration({ niche, onSelect }) {
       subcategory: niche.niche?.subcategory || "",
     })
     fetch(`/api/inspiration?${params}`)
-      .then((r) => r.json())
-      .then((data) => {
+      .then(async (r) => {
+        const text = await r.text()
+        let data
+        try { data = JSON.parse(text) } catch { data = { error: text.slice(0, 300) } }
         if (data.error) throw new Error(data.error)
+        return data
+      })
+      .then((data) => {
         setResults(data.results || [])
         if (data.results?.length === 0) setError("No results found — try a different niche")
       })

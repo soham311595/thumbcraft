@@ -135,7 +135,7 @@ export default defineConfig({
                   "X-Title": "ThumbCraft",
                 },
                 body: JSON.stringify({
-                  model: "google/gemini-3.1-flash-lite",
+                  model: "google/gemini-3.1-flash-image-preview",
                   messages: [{ role: "user", content: messageContent }],
                   modalities: ["image"],
                 }),

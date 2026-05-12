@@ -133,7 +133,7 @@ export default defineConfig({
                   "X-Title": "ThumbCraft",
                 },
                 body: JSON.stringify({
-                  model: "sourceful/riverflow-v2-pro",
+                  model: "google/gemini-3.1-flash-lite",
                   messages: [{ role: "user", content: messageContent }],
                   modalities: ["image"],
                 }),

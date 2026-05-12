@@ -11,7 +11,7 @@ export default async function handler(req, res) {
   const { niche = "", subcategory = "" } = req.query;
 
   try {
-    const query = encodeURIComponent(`${niche} ${subcategory} viral trending`);
+    const query = encodeURIComponent(`${niche} channel`);
     const searchRes = await fetch(
       `https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&maxResults=10&q=${query}&key=${apiKey}`
     );

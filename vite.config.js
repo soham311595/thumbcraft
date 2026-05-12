@@ -203,14 +203,16 @@ export default defineConfig({
               const searchRes = await fetch(
                 `https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&maxResults=10&q=${query}&key=${apiKey}`
               );
-              if (!searchRes.ok) {
-                const err = await searchRes.json();
+              const searchRaw = await searchRes.text();
+              let searchData;
+              try { searchData = JSON.parse(searchRaw); } catch { searchData = null; }
+              if (!searchRes.ok || !searchData) {
+                const msg = searchData?.error?.message || searchRaw?.slice(0, 200) || "YouTube search failed";
                 res.statusCode = searchRes.status;
                 res.setHeader("Content-Type", "application/json");
-                res.end(JSON.stringify({ error: err.error?.message || "YouTube search failed" }));
+                res.end(JSON.stringify({ error: msg }));
                 return;
               }
-              const searchData = await searchRes.json();
 
               const items = searchData.items || [];
               if (items.length === 0) {
@@ -228,19 +230,17 @@ export default defineConfig({
               const channelRes = await fetch(
                 `https://www.googleapis.com/youtube/v3/channels?part=statistics&id=${channelIds.join(",")}&key=${apiKey}`
               );
-              const channelData = await channelRes.json();
-              const channelStats = {};
-              for (const ch of channelData.items || []) {
-                const subs = parseInt(ch.statistics.subscriberCount || "0", 10);
-                const views = parseInt(ch.statistics.viewCount || "0", 10);
-                channelStats[ch.id] = { subscriberCount: subs, totalViewCount: views };
-              }
+              const channelRaw = await channelRes.text();
+              let channelData;
+              try { channelData = JSON.parse(channelRaw); } catch { channelData = { items: [] }; }
 
               // Fetch video statistics
               const videoRes = await fetch(
                 `https://www.googleapis.com/youtube/v3/videos?part=statistics&id=${videoIds.join(",")}&key=${apiKey}`
               );
-              const videoData = await videoRes.json();
+              const videoRaw = await videoRes.text();
+              let videoData;
+              try { videoData = JSON.parse(videoRaw); } catch { videoData = { items: [] }; }
               const videoStats = {};
               for (const v of videoData.items || []) {
                 videoStats[v.id] = parseInt(v.statistics.viewCount || "0", 10);

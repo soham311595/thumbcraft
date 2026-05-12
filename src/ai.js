@@ -108,17 +108,11 @@ export async function analyzeVision(imageUrls, textContent, systemPrompt) {
 }
 
 // ─────────────────────────────────────────────────────────
-// IMAGE GENERATION - Gemini
+// IMAGE GENERATION - Riverflow via OpenRouter
 // Returns base64 data URL - caller must upload to storage or use directly
 // ─────────────────────────────────────────────────────────
 export async function generateThumbnail(prompt, imageConfig, referenceImageUrl) {
-  const body = {
-    prompt,
-    image_config: imageConfig || {
-      aspect_ratio: "16:9",
-      image_size: "2K",
-    },
-  };
+  const body = { prompt };
   if (referenceImageUrl) {
     body.reference_image = referenceImageUrl;
   }

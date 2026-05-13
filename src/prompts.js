@@ -108,12 +108,15 @@ Return ONLY valid JSON — no markdown, no preamble:
 }`
 
 export const CREATOR_SUGGESTION_PROMPT = (niche, title, transcript) => `
-You are a YouTube niche expert. Based on the video context below, suggest exactly 4 YouTube creators
+You are a YouTube niche expert. Based on the video context below, suggest exactly 5-7 YouTube creators
 whose thumbnails would be valuable inspiration for creating a high-CTR thumbnail.
 
-Include:
-- 2 big established creators in this exact niche
-- 2 smaller creators who have had breakout viral videos in this niche
+Include a diverse mix of channel sizes:
+- Some big established creators (1M+ subscribers)
+- Some mid-size growing creators (100K-1M subscribers)
+- Some small underdog creators (under 100K subscribers who have had breakout viral moments)
+
+Spread your suggestions across different content styles within the niche for variety.
 
 VIDEO TITLE: "${title}"
 PRIMARY NICHE: ${niche.niche?.primary_category}
@@ -130,8 +133,8 @@ can be looked up via the YouTube API. The handle is the part after the @ in the 
 Return ONLY valid JSON — no markdown, no preamble:
 {
   "creators": [
-    { "handle": "@handle", "name": "Channel display name", "type": "successful", "reason": "one sentence why their thumbnails are relevant" },
-    { "handle": "@handle", "name": "Channel display name", "type": "underdog", "reason": "one sentence why their thumbnails are relevant" }
+    { "handle": "@handle", "name": "Channel display name", "reason": "one sentence why their thumbnails are relevant" },
+    { "handle": "@handle", "name": "Channel display name", "reason": "one sentence why their thumbnails are relevant" }
   ]
 }`
 

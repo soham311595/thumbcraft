@@ -15,14 +15,20 @@ function viralBadge(ratio) {
   return { label: "AVERAGE", color: "rgba(255,255,255,0.3)" }
 }
 
+function creatorType(subCount) {
+  if (subCount >= 1_000_000) return "top"
+  if (subCount >= 100_000) return "mid"
+  return "underdog"
+}
+
 export default function Inspiration({ niche, transcript, videoTitle, theme, onSelect }) {
   const cardStyle = { background: theme.cardBg, border: `1px solid ${theme.cardBorder}`, borderRadius: 14, padding: 20 }
-  const [phase, setPhase] = useState("suggesting") // suggesting | fetching | done | error
+  const [phase, setPhase] = useState("suggesting")
   const [creators, setCreators] = useState([])
+  const [channelsData, setChannelsData] = useState([])
   const [results, setResults] = useState([])
   const [error, setError] = useState("")
   const [selected, setSelected] = useState(null)
-  const [creatorTypeMap, setCreatorTypeMap] = useState({})
   const mountedRef = useRef(true)
 
   useEffect(() => {
@@ -48,13 +54,6 @@ export default function Inspiration({ niche, transcript, videoTitle, theme, onSe
         if (creatorList.length === 0) throw new Error("Could not identify relevant creators")
 
         setCreators(creatorList)
-
-        const typeMap = {}
-        for (const c of creatorList) {
-          typeMap[c.handle] = c.type
-        }
-        setCreatorTypeMap(typeMap)
-
         setPhase("fetching")
 
         const handles = creatorList.map(c => c.handle).join(",")
@@ -67,6 +66,7 @@ export default function Inspiration({ niche, transcript, videoTitle, theme, onSe
         if (!mountedRef.current) return
 
         setResults(data.results || [])
+        setChannelsData(data.channels || [])
         if (data.results?.length === 0) setError("No long-form videos found from these creators")
         setPhase("done")
       } catch (e) {
@@ -105,8 +105,7 @@ export default function Inspiration({ niche, transcript, videoTitle, theme, onSe
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "center" }}>
           {creators.map((c) => (
             <span key={c.handle} style={{
-              fontSize: 11, color: c.type === "successful" ? theme.textBright : theme.textMuted,
-              background: c.type === "successful" ? "rgba(247,37,133,0.1)" : "rgba(255,255,255,0.04)",
+              fontSize: 11, color: theme.textMuted, background: "rgba(255,255,255,0.04)",
               padding: "3px 10px", borderRadius: 20, fontFamily: "'Space Mono', monospace",
             }}>
               {c.name}
@@ -144,24 +143,29 @@ export default function Inspiration({ niche, transcript, videoTitle, theme, onSe
 
       {/* Creator legend */}
       <div style={{ display: "flex", gap: 16, flexWrap: "wrap", marginBottom: 20 }}>
-        {creators.map((c) => (
-          <div key={c.handle} style={{ display: "flex", alignItems: "center", gap: 6 }}>
-            {c.type === "successful" ? (
-              <Star size={12} style={{ color: "#f72585" }} />
-            ) : (
-              <Zap size={12} style={{ color: "#eab308" }} />
-            )}
-            <span style={{ fontSize: 12, color: theme.textPrimary, fontWeight: 600 }}>{c.name}</span>
-            <span style={{
-              fontSize: 9, padding: "1px 6px", borderRadius: 8,
-              background: c.type === "successful" ? "rgba(247,37,133,0.12)" : "rgba(234,179,8,0.12)",
-              color: c.type === "successful" ? "#f72585" : "#eab308",
-              fontWeight: 700, fontFamily: "'Space Mono', monospace",
-            }}>
-              {c.type === "successful" ? "TOP" : "UNDERDOG"}
-            </span>
-          </div>
-        ))}
+        {channelsData.map((c) => {
+          const type = creatorType(c.subscriberCount)
+          return (
+            <div key={c.handle} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              {type === "top" ? (
+                <Star size={12} style={{ color: "#f72585" }} />
+              ) : type === "mid" ? (
+                <Star size={12} style={{ color: "#8b5cf6" }} />
+              ) : (
+                <Zap size={12} style={{ color: "#eab308" }} />
+              )}
+              <span style={{ fontSize: 12, color: theme.textPrimary, fontWeight: 600 }}>{c.name}</span>
+              <span style={{
+                fontSize: 9, padding: "1px 6px", borderRadius: 8,
+                background: type === "top" ? "rgba(247,37,133,0.12)" : type === "mid" ? "rgba(139,92,246,0.12)" : "rgba(234,179,8,0.12)",
+                color: type === "top" ? "#f72585" : type === "mid" ? "#8b5cf6" : "#eab308",
+                fontWeight: 700, fontFamily: "'Space Mono', monospace",
+              }}>
+                {type === "top" ? "TOP" : type === "mid" ? "MID" : "UNDERDOG"}
+              </span>
+            </div>
+          )
+        })}
       </div>
 
       {results.length === 0 && !error && (
@@ -175,7 +179,7 @@ export default function Inspiration({ niche, transcript, videoTitle, theme, onSe
           const badge = viralBadge(item.viralRatio)
           const isSelected = selected === item.videoId
           const isAnythingSelected = selected !== null
-          const creatorType = creatorTypeMap[item.creatorHandle]
+          const type = creatorType(item.subscriberCount)
           return (
             <div
               key={item.videoId}
@@ -217,12 +221,12 @@ export default function Inspiration({ niche, transcript, videoTitle, theme, onSe
                 <div style={{
                   position: "absolute", top: 6, left: 6,
                   display: "flex", alignItems: "center", gap: 3,
-                  background: creatorType === "successful" ? "rgba(247,37,133,0.85)" : "rgba(234,179,8,0.85)",
+                  background: type === "top" ? "rgba(247,37,133,0.85)" : type === "mid" ? "rgba(139,92,246,0.85)" : "rgba(234,179,8,0.85)",
                   color: "#fff", borderRadius: 6, padding: "2px 7px",
                   fontSize: 9, fontWeight: 700, fontFamily: "'Space Mono', monospace",
                 }}>
-                  {creatorType === "successful" ? <Star size={9} /> : <Zap size={9} />}
-                  {creatorType === "successful" ? "TOP" : "UNDERDOG"}
+                  {type === "top" ? <Star size={9} /> : type === "mid" ? <Star size={9} /> : <Zap size={9} />}
+                  {type === "top" ? "TOP" : type === "mid" ? "MID" : "UNDERDOG"}
                 </div>
               </div>
               <div style={{ fontSize: 12, fontWeight: 600, color: theme.textPrimary, marginBottom: 2, lineHeight: 1.3, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>

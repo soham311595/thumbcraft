@@ -216,17 +216,18 @@ export default defineConfig({
                   try { data = JSON.parse(raw); } catch { data = null; }
                   if (!r.ok || !data?.items?.length) return null;
                   const ch = data.items[0];
-                  return {
-                    handle: `@${handle}`,
-                    channelId: ch.id,
-                    name: ch.snippet?.title || handle,
-                    totalViews: parseInt(ch.statistics?.viewCount || "0", 10),
-                    totalVideos: parseInt(ch.statistics?.videoCount || "1", 10),
-                    avgViews: Math.round(
-                      parseInt(ch.statistics?.viewCount || "0", 10) /
-                      Math.max(parseInt(ch.statistics?.videoCount || "1", 10), 1)
-                    ),
-                  };
+                    return {
+                      handle: `@${handle}`,
+                      channelId: ch.id,
+                      name: ch.snippet?.title || handle,
+                      subscriberCount: parseInt(ch.statistics?.subscriberCount || "0", 10),
+                      totalViews: parseInt(ch.statistics?.viewCount || "0", 10),
+                      totalVideos: parseInt(ch.statistics?.videoCount || "1", 10),
+                      avgViews: Math.round(
+                        parseInt(ch.statistics?.viewCount || "0", 10) /
+                        Math.max(parseInt(ch.statistics?.videoCount || "1", 10), 1)
+                      ),
+                    };
                 })
               );
 
@@ -283,7 +284,7 @@ export default defineConfig({
               }
 
               const videoRes = await fetch(
-                `https://www.googleapis.com/youtube/v3/videos?part=statistics,contentDetails&id=${allVideos.join(",")}&key=${apiKey}`
+                `https://www.googleapis.com/youtube/v3/videos?part=snippet,contentDetails,statistics&id=${allVideos.join(",")}&key=${apiKey}`
               );
               const videoRaw = await videoRes.text();
               let videoData;
@@ -313,6 +314,7 @@ export default defineConfig({
                   channelTitle: creator.name,
                   channelId: creator.channelId,
                   creatorHandle: creator.handle,
+                  subscriberCount: creator.subscriberCount,
                   thumbnailUrl: `https://i.ytimg.com/vi/${vid}/hqdefault.jpg`,
                   viewCount,
                   channelAvgViews: avgViews,
@@ -322,9 +324,20 @@ export default defineConfig({
 
               results.sort((a, b) => b.viralRatio - a.viralRatio);
 
+              const perCreatorCount = {};
+              const diverseResults = [];
+              for (const r of results) {
+                const key = r.creatorHandle;
+                const count = perCreatorCount[key] || 0;
+                if (count >= 3) continue;
+                perCreatorCount[key] = count + 1;
+                diverseResults.push(r);
+                if (diverseResults.length === 15) break;
+              }
+
               res.statusCode = 200;
               res.setHeader("Content-Type", "application/json");
-              res.end(JSON.stringify({ results }));
+              res.end(JSON.stringify({ results: diverseResults }));
             } catch (error) {
               res.statusCode = 500;
               res.setHeader("Content-Type", "application/json");

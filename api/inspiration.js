@@ -39,6 +39,7 @@ export default async function handler(req, res) {
           handle: `@${handle}`,
           channelId: ch.id,
           name: ch.snippet?.title || handle,
+          subscriberCount: parseInt(ch.statistics?.subscriberCount || "0", 10),
           totalViews: parseInt(ch.statistics?.viewCount || "0", 10),
           totalVideos: parseInt(ch.statistics?.videoCount || "1", 10),
           avgViews: Math.round(
@@ -99,9 +100,9 @@ export default async function handler(req, res) {
     }
 
     // Phase 3: Get video stats + durations in one batch
-    const videoRes = await fetch(
-      `https://www.googleapis.com/youtube/v3/videos?part=statistics,contentDetails&id=${allVideos.join(",")}&key=${apiKey}`
-    );
+      const videoRes = await fetch(
+        `https://www.googleapis.com/youtube/v3/videos?part=snippet,contentDetails,statistics&id=${allVideos.join(",")}&key=${apiKey}`
+      );
     const videoRaw = await videoRes.text();
     let videoData;
     try { videoData = JSON.parse(videoRaw); } catch { videoData = { items: [] }; }
@@ -131,10 +132,11 @@ export default async function handler(req, res) {
 
       results.push({
         videoId: vid,
-        title: allVideos.find((id) => id === vid) ? (v.snippet?.title || "Untitled") : "Untitled",
+        title: v.snippet?.title || "Untitled",
         channelTitle: creator.name,
         channelId: creator.channelId,
         creatorHandle: creator.handle,
+        subscriberCount: creator.subscriberCount,
         thumbnailUrl: `https://i.ytimg.com/vi/${vid}/hqdefault.jpg`,
         viewCount,
         channelAvgViews: avgViews,
@@ -144,11 +146,24 @@ export default async function handler(req, res) {
 
     results.sort((a, b) => b.viralRatio - a.viralRatio);
 
+    // Ensure diversity: cap at 3 videos per creator, max 15 total, at least 5 creators
+    const perCreatorCount = {};
+    const diverseResults = [];
+    for (const r of results) {
+      const key = r.creatorHandle;
+      const count = perCreatorCount[key] || 0;
+      if (count >= 3) continue;
+      perCreatorCount[key] = count + 1;
+      diverseResults.push(r);
+      if (diverseResults.length === 15) break;
+    }
+
     return res.status(200).json({
-      results,
+      results: diverseResults,
       channels: validChannels.map((c) => ({
         handle: c.handle,
         name: c.name,
+        subscriberCount: c.subscriberCount,
         avgViews: c.avgViews,
         totalViews: c.totalViews,
         totalVideos: c.totalVideos,

@@ -1,4 +1,5 @@
 import crypto from "crypto"
+import { getLastSeq, setLastSeq } from "./nonce-store.js"
 
 export const MONTHLY_LIMIT = 50
 
@@ -11,8 +12,8 @@ function currentMonth() {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`
 }
 
-function encodePayload(subscriptionId, plan, month, remaining) {
-  const raw = `${subscriptionId}|${plan}|${month}|${remaining}`
+function encodePayload(subscriptionId, plan, month, remaining, seq) {
+  const raw = `${subscriptionId}|${plan}|${month}|${remaining}|${seq}`
   return Buffer.from(raw).toString("base64")
 }
 
@@ -27,16 +28,19 @@ function verify(token) {
     const [payload, signature] = parts
     if (signature !== sign(payload)) return null
     const raw = Buffer.from(payload, "base64").toString()
-    const [subscriptionId, plan, month, remainingStr] = raw.split("|")
+    const fields = raw.split("|")
+    if (fields.length !== 5) return null
+    const [subscriptionId, plan, month, remainingStr, seqStr] = fields
     const remaining = parseInt(remainingStr, 10)
-    if (isNaN(remaining)) return null
-    return { subscriptionId, plan, month, remaining }
+    const seq = parseInt(seqStr, 10)
+    if (isNaN(remaining) || isNaN(seq)) return null
+    return { subscriptionId, plan, month, remaining, seq }
   } catch { return null }
 }
 
 export function createLicenseKey(subscriptionId, plan) {
   const month = currentMonth()
-  const payload = encodePayload(subscriptionId, plan, month, MONTHLY_LIMIT)
+  const payload = encodePayload(subscriptionId, plan, month, MONTHLY_LIMIT, 1)
   return `${payload}.${sign(payload)}`
 }
 
@@ -52,7 +56,7 @@ export function createNextLicenseKey(licenseKey) {
   const cm = currentMonth()
   const base = info.month !== cm ? MONTHLY_LIMIT : info.remaining
   if (base <= 0) return null
-  const newPayload = encodePayload(info.subscriptionId, info.plan, cm, base - 1)
+  const newPayload = encodePayload(info.subscriptionId, info.plan, cm, base - 1, info.seq + 1)
   return `${newPayload}.${sign(newPayload)}`
 }
 
@@ -60,14 +64,16 @@ export function checkGenerationLimit(ip, licenseKey) {
   if (!licenseKey) {
     return { allowed: true, remaining: 999, isPro: false }
   }
-  const remaining = getEffectiveRemaining(licenseKey)
-  if (remaining === null) {
+  const info = verify(licenseKey)
+  if (!info) {
     return { allowed: true, remaining: 999, isPro: false }
   }
-  if (remaining <= 0) {
+  const cm = currentMonth()
+  const effective = info.month !== cm ? MONTHLY_LIMIT : info.remaining
+  if (effective <= 0) {
     return { allowed: false, remaining: 0, isPro: true, exhausted: true }
   }
-  return { allowed: true, remaining, isPro: true }
+  return { allowed: true, remaining: effective, isPro: true, seq: info.seq, subscriptionId: info.subscriptionId }
 }
 
 export function incrementGenerationCount(ip, licenseKey) {

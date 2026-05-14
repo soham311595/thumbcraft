@@ -1,4 +1,5 @@
 import { checkGenerationLimit, incrementGenerationCount } from "../src/rate-limit.js";
+import { getLastSeq, setLastSeq } from "../src/nonce-store.js";
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {
@@ -21,6 +22,14 @@ export default async function handler(req, res) {
   }
   if (!limit.allowed) {
     return res.status(402).json({ error: "Free limit reached" });
+  }
+
+  // Anti-replay: check sequence number hasn't been used before
+  if (limit.isPro) {
+    const lastSeq = await getLastSeq(limit.subscriptionId);
+    if (limit.seq <= lastSeq) {
+      return res.status(402).json({ error: "Monthly limit reached (50/50). Resets next month.", exhausted: true });
+    }
   }
 
   const { prompt, reference_images } = req.body;
@@ -70,6 +79,11 @@ export default async function handler(req, res) {
     const images = data?.choices?.[0]?.message?.images;
     if (!images?.length) {
       return res.status(500).json({ error: "No image in model response" });
+    }
+
+    // Record this seq as used (prevents replay of this token)
+    if (limit.isPro) {
+      await setLastSeq(limit.subscriptionId, limit.seq);
     }
 
     const newLicenseKey = incrementGenerationCount(ip, licenseKey);

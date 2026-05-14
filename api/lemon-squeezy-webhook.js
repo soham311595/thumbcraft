@@ -1,27 +1,13 @@
 import { kv } from "@vercel/kv";
+import crypto from "crypto";
 
 function verifySignature(rawBody, signature, secret) {
   if (!secret || !signature) return false;
-  const encoder = new TextEncoder();
-  const key = encoder.encode(secret);
-  const body = encoder.encode(rawBody);
-  const crypto = globalThis.crypto || require("crypto");
-
-  const algo = { name: "HMAC", hash: "SHA-256" };
-
-  return crypto.subtle
-    ? crypto.subtle.importKey("raw", key, algo, false, ["verify"]).then((k) =>
-        crypto.subtle.verify(algo, k, hexToBuffer(signature), body)
-      ).catch(() => false)
-    : false;
-}
-
-function hexToBuffer(hex) {
-  const bytes = new Uint8Array(hex.length / 2);
-  for (let i = 0; i < hex.length; i += 2) {
-    bytes[i / 2] = parseInt(hex.slice(i, i + 2), 16);
-  }
-  return bytes.buffer;
+  const hmac = crypto.createHmac("sha256", secret);
+  hmac.update(rawBody, "utf8");
+  const digest = hmac.digest("hex");
+  if (digest.length !== signature.length) return false;
+  return crypto.timingSafeEqual(Buffer.from(digest, "utf8"), Buffer.from(signature, "utf8"));
 }
 
 export default async function handler(req, res) {
@@ -37,8 +23,7 @@ export default async function handler(req, res) {
   const rawBody = JSON.stringify(req.body);
   const signature = req.headers["x-signature"];
 
-  const isValid = await verifySignature(rawBody, signature, secret);
-  if (!isValid || !signature) {
+  if (!signature || !verifySignature(rawBody, signature, secret)) {
     return res.status(401).json({ error: "Invalid signature" });
   }
 

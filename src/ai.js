@@ -115,6 +115,10 @@ export async function analyzeVision(imageUrls, textContent, systemPrompt) {
 // Returns base64 data URL - caller must upload to storage or use directly
 // ─────────────────────────────────────────────────────────
 export async function generateThumbnail(prompt, imageConfig, referenceImages = []) {
+  const licenseKey = typeof localStorage !== "undefined" ? localStorage.getItem("thumbcraft-license") : ""
+  const headers = { "Content-Type": "application/json" }
+  if (licenseKey) headers["x-license-key"] = licenseKey
+
   const body = { prompt };
   if (referenceImages.length > 0) {
     body.reference_images = referenceImages;
@@ -122,13 +126,18 @@ export async function generateThumbnail(prompt, imageConfig, referenceImages = [
 
   const res = await fetch("/api/generate-image", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers,
     body: JSON.stringify(body),
   });
 
   const raw = await res.text();
   let data;
   try { data = JSON.parse(raw); } catch { throw new Error(raw.slice(0, 300)); }
-  if (!res.ok) throw new Error(data.error || "Image generation failed");
+  if (!res.ok) {
+    if (res.status === 402) {
+      throw new Error("FREE_LIMIT_REACHED");
+    }
+    throw new Error(data.error || "Image generation failed");
+  }
   return data;
 }

@@ -1,3 +1,5 @@
+import { checkGenerationLimit, incrementGenerationCount } from "../src/rate-limit.js";
+
 export default async function handler(req, res) {
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Method not allowed" });
@@ -6,6 +8,16 @@ export default async function handler(req, res) {
   const apiKey = process.env.OPENROUTER_API_KEY;
   if (!apiKey) {
     return res.status(500).json({ error: "OPENROUTER_API_KEY not configured" });
+  }
+
+  const ip = req.headers["x-forwarded-for"]?.split(",")[0]?.trim() ||
+             req.socket?.remoteAddress ||
+             "unknown";
+  const licenseKey = req.headers["x-license-key"] || "";
+
+  const limit = await checkGenerationLimit(ip, licenseKey);
+  if (!limit.allowed) {
+    return res.status(402).json({ error: "Free limit reached", upgrade: true });
   }
 
   const { prompt, reference_images } = req.body;
@@ -56,6 +68,8 @@ export default async function handler(req, res) {
     if (!images?.length) {
       return res.status(500).json({ error: "No image in model response" });
     }
+
+    await incrementGenerationCount(ip);
 
     return res.status(200).json({
       dataUrl: images[0].image_url.url,

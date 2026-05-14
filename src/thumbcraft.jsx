@@ -156,6 +156,82 @@ export default function ThumbCraft() {
     }
   }, [nicheAnalysis])
 
+  // ─── Subscription / Rate Limit ──────────────────────────
+  const [unlocked, setUnlocked] = useState(false)
+  const [remaining, setRemaining] = useState(3)
+  const [showUpsell, setShowUpsell] = useState(false)
+  const [purchaseLoading, setPurchaseLoading] = useState(false)
+
+  const checkStatus = async () => {
+    const licenseKey = typeof localStorage !== "undefined" ? localStorage.getItem("thumbcraft-license") : ""
+    try {
+      const res = await fetch("/api/verify-status", {
+        headers: licenseKey ? { "x-license-key": licenseKey } : {}
+      })
+      const data = await res.json()
+      if (data.unlocked) {
+        setUnlocked(true)
+        setRemaining(Infinity)
+        setShowUpsell(false)
+      } else {
+        setRemaining(data.remaining)
+        setUnlocked(false)
+        setShowUpsell(data.remaining <= 0)
+      }
+    } catch {}
+  }
+
+  const handleCheckoutRedirect = async (sessionId) => {
+    try {
+      const res = await fetch("/api/verify-checkout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ session_id: sessionId }),
+      })
+      const data = await res.json()
+      if (data.success) {
+        localStorage.setItem("thumbcraft-license", data.license_key)
+        setUnlocked(true)
+        setRemaining(Infinity)
+        setShowUpsell(false)
+        window.history.replaceState({}, "", "/")
+      }
+    } catch {}
+  }
+
+  const handleSubscribe = async (plan) => {
+    setPurchaseLoading(true)
+    setError("")
+    try {
+      const res = await fetch("/api/create-checkout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ plan }),
+      })
+      const data = await res.json()
+      if (data.url) window.location.href = data.url
+      else throw new Error(data.error || "Failed to create checkout")
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setPurchaseLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const sessionId = params.get("session_id")
+    if (sessionId) {
+      handleCheckoutRedirect(sessionId)
+      return
+    }
+    checkStatus()
+  }, [])
+
+  useEffect(() => {
+    if (step === 4) checkStatus()
+  }, [step])
+
   // ─── File handlers ──────────────────────────────────────
   const handleFileDrop = (e) => {
     e.preventDefault()
@@ -252,10 +328,17 @@ export default function ThumbCraft() {
 
       const result = await generateThumbnail(promptText, null, refImages)
       setGeneratedThumb(result)
+      setRemaining((r) => Math.max(0, r - 1))
       setStatus("Analyzing thumbnail...")
       triggerCritique(result)
     } catch (e) {
-      setError(e.message)
+      if (e.message === "FREE_LIMIT_REACHED") {
+        setShowUpsell(true)
+        setRemaining(0)
+        setError("You've used all 3 free generations. Subscribe for unlimited.")
+      } else {
+        setError(e.message)
+      }
     } finally {
       setGenerating(false)
       setStatus("")
@@ -603,6 +686,32 @@ export default function ThumbCraft() {
       {step === 4 && (
         <div>
           {!generatedThumb ? (
+            showUpsell && !unlocked ? (
+              <div style={{ maxWidth: 500, margin: "0 auto", textAlign: "center", padding: "40px 20px" }}>
+                <div style={{ fontSize: 48, marginBottom: 16 }}>🔒</div>
+                <h3 style={{ fontSize: 20, fontWeight: 700, color: "#fff", margin: "0 0 8px" }}>
+                  Free Generations Used Up
+                </h3>
+                <p style={{ fontSize: 14, color: "var(--c-text-secondary)", marginBottom: 24, lineHeight: 1.6 }}>
+                  You've used all 3 free thumbnail generations.
+                  Subscribe to ThumbCraft Pro for unlimited access.
+                </p>
+                <div style={{ display: "flex", flexDirection: "column", gap: 12, alignItems: "center" }}>
+                  <button onClick={() => handleSubscribe("monthly")} disabled={purchaseLoading}
+                    style={btn(!purchaseLoading)}>
+                    {purchaseLoading ? "Opening checkout..." : "Subscribe Monthly — $19/mo"}
+                  </button>
+                  <button onClick={() => handleSubscribe("annual")} disabled={purchaseLoading}
+                    style={{
+                      ...btn(!purchaseLoading),
+                      background: "transparent", border: "1px solid var(--c-border-subtle)",
+                      color: purchaseLoading ? "var(--c-text-dim)" : "var(--c-text-bright)",
+                    }}>
+                    Subscribe Annual — $180/yr (save 21%)
+                  </button>
+                </div>
+              </div>
+            ) : (
             <div>
               <div style={{ marginBottom: 22 }}>
                 <h2 style={{ fontSize: 16, fontWeight: 700, color: "#fff", margin: "0 0 4px" }}>
@@ -615,7 +724,7 @@ export default function ThumbCraft() {
                   }
                 </p>
                 <p style={{ fontSize: 11, color: "var(--c-text-muted)", margin: 0, fontFamily: "'Space Mono', monospace" }}>
-                  AI will blend your captured frame with the inspiration style
+                  {unlocked ? "Pro account — unlimited generations" : `${remaining} free generation${remaining === 1 ? "" : "s"} remaining`}
                 </p>
               </div>
 
@@ -691,6 +800,7 @@ export default function ThumbCraft() {
                 </button>
               </div>
             </div>
+            )
           ) : (
             <div>
               <div style={{ marginBottom: 22 }}>
@@ -778,8 +888,9 @@ export default function ThumbCraft() {
         </div>
       )}
 
-      <div style={{ marginTop: 48, paddingTop: 16, borderTop: "1px solid var(--c-divider)", fontSize: 10, color: "var(--c-text-very-dim)", fontFamily: "'Space Mono', monospace" }}>
-        Powered by YouTube Transcript API · OpenRouter · 100% in-browser frame capture
+      <div style={{ marginTop: 48, paddingTop: 16, borderTop: "1px solid var(--c-divider)", fontSize: 10, color: "var(--c-text-very-dim)", fontFamily: "'Space Mono', monospace", display: "flex", justifyContent: "space-between" }}>
+        <span>YouTube Transcript API · OpenRouter</span>
+        <span>{unlocked ? "✦ Pro" : `${remaining} / 3 free`}</span>
       </div>
 
       <style>{`

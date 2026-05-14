@@ -135,9 +135,14 @@ export async function generateThumbnail(prompt, imageConfig, referenceImages = [
   try { data = JSON.parse(raw); } catch { throw new Error(raw.slice(0, 300)); }
   if (!res.ok) {
     if (res.status === 402) {
-      throw new Error("FREE_LIMIT_REACHED");
+      throw new Error(data.exhausted ? "MONTHLY_LIMIT_REACHED" : "FREE_LIMIT_REACHED");
     }
     throw new Error(data.error || "Image generation failed");
   }
+
+  if (data.license_key && typeof localStorage !== "undefined") {
+    try { localStorage.setItem("thumbcraft-license", data.license_key) } catch {}
+  }
+
   return data;
 }

@@ -58,9 +58,8 @@ export default async function handler(req, res) {
 
     const subAttrs = subData.data.attributes;
     const plan = subAttrs.variant_name?.toLowerCase()?.includes("annual") ? "annual" : "monthly";
-    const expiresAt = subAttrs.ends_at || subAttrs.renews_at || new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString();
 
-    const licenseKey = createLicenseKey(subscriptionId, plan, expiresAt);
+    const licenseKey = createLicenseKey(subscriptionId, plan);
 
     return res.status(200).json({
       success: true,

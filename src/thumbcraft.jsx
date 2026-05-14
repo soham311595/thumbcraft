@@ -180,8 +180,8 @@ export default function ThumbCraft() {
       const data = await res.json()
       if (data.unlocked) {
         setUnlocked(true)
-        setRemaining(Infinity)
-        setShowUpsell(false)
+        setRemaining(data.remaining)
+        setShowUpsell(data.remaining <= 0)
       } else {
         const count = getFreeCount()
         setRemaining(count)
@@ -347,10 +347,14 @@ export default function ThumbCraft() {
       setStatus("Analyzing thumbnail...")
       triggerCritique(result)
     } catch (e) {
-      if (e.message === "FREE_LIMIT_REACHED") {
+      if (e.message === "MONTHLY_LIMIT_REACHED") {
         setShowUpsell(true)
         setRemaining(0)
-        setError("You've used all 3 free generations. Subscribe for unlimited.")
+        setError("You've used all 50 generations this month. Resets next month.")
+      } else if (e.message === "FREE_LIMIT_REACHED") {
+        setShowUpsell(true)
+        setRemaining(0)
+        setError("You've used all 3 free generations. Subscribe for 50/month.")
       } else {
         setError(e.message)
       }
@@ -709,7 +713,7 @@ export default function ThumbCraft() {
                 </h3>
                 <p style={{ fontSize: 14, color: "var(--c-text-secondary)", marginBottom: 24, lineHeight: 1.6 }}>
                   You've used all 3 free thumbnail generations.
-                  Subscribe to ThumbCraft Pro for unlimited access.
+                  Subscribe to ThumbCraft Pro for 50 generations per month.
                 </p>
                 <div style={{ display: "flex", flexDirection: "column", gap: 12, alignItems: "center" }}>
                   <button onClick={() => handleSubscribe("monthly")} disabled={purchaseLoading}
@@ -739,7 +743,7 @@ export default function ThumbCraft() {
                   }
                 </p>
                 <p style={{ fontSize: 11, color: "var(--c-text-muted)", margin: 0, fontFamily: "'Space Mono', monospace" }}>
-                  {unlocked ? "Pro account — unlimited generations" : `${remaining} free generation${remaining === 1 ? "" : "s"} remaining`}
+                  {unlocked ? `${remaining}/50 generations this month` : `${remaining} free generation${remaining === 1 ? "" : "s"} remaining`}
                 </p>
               </div>
 
@@ -905,7 +909,7 @@ export default function ThumbCraft() {
 
       <div style={{ marginTop: 48, paddingTop: 16, borderTop: "1px solid var(--c-divider)", fontSize: 10, color: "var(--c-text-very-dim)", fontFamily: "'Space Mono', monospace", display: "flex", justifyContent: "space-between" }}>
         <span>YouTube Transcript API · OpenRouter</span>
-        <span>{unlocked ? "✦ Pro" : `${remaining} / 3 free`}</span>
+        <span>{unlocked ? `✦ ${remaining}/50` : `${remaining} / 3 free`}</span>
       </div>
 
       <style>{`

@@ -15,9 +15,12 @@ export default async function handler(req, res) {
              "unknown";
   const licenseKey = req.headers["x-license-key"] || "";
 
-  const limit = await checkGenerationLimit(ip, licenseKey);
+  const limit = checkGenerationLimit(ip, licenseKey);
+  if (!limit.allowed && limit.exhausted) {
+    return res.status(402).json({ error: "Monthly limit reached (50/50). Resets next month.", exhausted: true });
+  }
   if (!limit.allowed) {
-    return res.status(402).json({ error: "Free limit reached", upgrade: true });
+    return res.status(402).json({ error: "Free limit reached" });
   }
 
   const { prompt, reference_images } = req.body;
@@ -69,12 +72,15 @@ export default async function handler(req, res) {
       return res.status(500).json({ error: "No image in model response" });
     }
 
-    await incrementGenerationCount(ip);
+    const newLicenseKey = incrementGenerationCount(ip, licenseKey);
 
-    return res.status(200).json({
+    const result = {
       dataUrl: images[0].image_url.url,
       prompt,
-    });
+    };
+    if (newLicenseKey) result.license_key = newLicenseKey;
+
+    return res.status(200).json(result);
   } catch (error) {
     return res.status(500).json({ error: error.message });
   }

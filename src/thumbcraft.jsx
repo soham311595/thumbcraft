@@ -201,7 +201,6 @@ export default function ThumbCraft() {
       const result = await analyzeText(
         NICHE_ANALYSIS_PROMPT(formatted, title || "Unknown"),
         null,
-        { reasoning: false },
       )
       setNicheAnalysis(result)
       setStep(1)

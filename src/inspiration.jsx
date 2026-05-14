@@ -46,7 +46,6 @@ export default function Inspiration({ niche, transcript, videoTitle, theme, onSe
         const result = await analyzeText(
           CREATOR_SUGGESTION_PROMPT(niche, videoTitle || "Unknown", formatted),
           null,
-          { reasoning: false }
         )
         if (!mountedRef.current) return
 

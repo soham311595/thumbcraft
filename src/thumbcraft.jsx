@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { analyzeText, analyzeVision, generateThumbnail } from "./ai"
 import { fetchTranscript, formatTranscript, fetchVideoTitle } from "./transcript"
 import { useTheme } from "./theme"

@@ -1,39 +1,42 @@
-import { kv } from "@vercel/kv";
+import crypto from "crypto"
 
-const FREE_LIMIT = 3;
+function getSecret() {
+  return process.env.LEMONSQUEEZY_WEBHOOK_SECRET || process.env.OPENROUTER_API_KEY || "dev-secret-change-me"
+}
 
-function kvAvailable() {
-  return !!process.env.KV_URL;
+export function createLicenseKey(subscriptionId, plan, expiresAt) {
+  const raw = `${subscriptionId}|${plan}|${expiresAt}`
+  const payload = Buffer.from(raw).toString("base64")
+  const signature = crypto.createHmac("sha256", getSecret()).update(payload).digest("hex")
+  return `${payload}.${signature}`
+}
+
+export function verifyLicenseKey(licenseKey) {
+  try {
+    const parts = licenseKey.split(".")
+    if (parts.length !== 2) return null
+    const [payload, signature] = parts
+    const expected = crypto.createHmac("sha256", getSecret()).update(payload).digest("hex")
+    if (signature !== expected) return null
+    const raw = Buffer.from(payload, "base64").toString()
+    const [subscriptionId, plan, expiresAt] = raw.split("|")
+    if (new Date(expiresAt) < new Date()) return null
+    return { subscriptionId, plan, expiresAt }
+  } catch { return null }
 }
 
 export async function checkGenerationLimit(ip = "", licenseKey = "") {
-  if (!kvAvailable()) {
-    return { allowed: true, remaining: 999, isPro: false };
-  }
-
   if (licenseKey) {
-    try {
-      const license = await kv.get(`license:${licenseKey}`);
-      if (license && license.status === "active") {
-        return { allowed: true, remaining: Infinity, isPro: true };
-      }
-    } catch {}
-  }
-
-  try {
-    const count = await kv.get(`gen:${ip}`) || 0;
-    if (count >= FREE_LIMIT) {
-      return { allowed: false, remaining: 0, isPro: false };
+    const info = verifyLicenseKey(licenseKey)
+    if (info) {
+      return { allowed: true, remaining: Infinity, isPro: true }
     }
-    return { allowed: true, remaining: FREE_LIMIT - count, isPro: false };
-  } catch {
-    return { allowed: true, remaining: 1, isPro: false };
   }
+  // Free tier is enforced client-side via localStorage
+  // Server allows all requests without a valid license key
+  return { allowed: true, remaining: 999, isPro: false }
 }
 
 export async function incrementGenerationCount(ip = "") {
-  if (!kvAvailable()) return;
-  try {
-    await kv.incr(`gen:${ip}`);
-  } catch {}
+  // No-op: free tier tracking is client-side
 }

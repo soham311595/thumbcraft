@@ -5,17 +5,13 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: "Method not allowed" });
   }
 
-  const ip = req.headers["x-forwarded-for"]?.split(",")[0]?.trim() ||
-             req.socket?.remoteAddress ||
-             "unknown";
-
   const licenseKey = req.headers["x-license-key"] || req.query.license_key || "";
 
   try {
-    const result = await checkGenerationLimit(ip, licenseKey);
+    const result = await checkGenerationLimit("", licenseKey);
     return res.status(200).json({
       unlocked: result.isPro,
-      remaining: result.isPro ? Infinity : result.remaining,
+      remaining: result.isPro ? Infinity : 3,
       plan: null,
     });
   } catch (error) {

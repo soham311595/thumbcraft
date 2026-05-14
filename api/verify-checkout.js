@@ -1,4 +1,4 @@
-import { kv } from "@vercel/kv";
+import { createLicenseKey } from "../src/rate-limit.js";
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {
@@ -8,10 +8,6 @@ export default async function handler(req, res) {
   const apiKey = process.env.LEMONSQUEEZY_API_KEY;
   if (!apiKey) {
     return res.status(500).json({ error: "LemonSqueezy not configured" });
-  }
-
-  if (!process.env.KV_URL) {
-    return res.status(500).json({ error: "KV not configured" });
   }
 
   const { session_id } = req.body;
@@ -35,7 +31,6 @@ export default async function handler(req, res) {
     }
 
     const checkout = lsData.data[0];
-    const checkoutId = checkout.id;
     const status = checkout.attributes?.status;
 
     if (status !== "paid") {
@@ -63,26 +58,9 @@ export default async function handler(req, res) {
 
     const subAttrs = subData.data.attributes;
     const plan = subAttrs.variant_name?.toLowerCase()?.includes("annual") ? "annual" : "monthly";
-    const expiresAt = subAttrs.ends_at || subAttrs.renews_at;
-    const customerEmail = subAttrs.user_email || "";
+    const expiresAt = subAttrs.ends_at || subAttrs.renews_at || new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString();
 
-    const licenseKey = crypto.randomUUID();
-
-    await Promise.all([
-      kv.set(`license:${licenseKey}`, {
-        subscription_id: subscriptionId,
-        plan,
-        status: "active",
-        expires_at: expiresAt,
-        customer_email: customerEmail,
-      }),
-      kv.set(`sub:${subscriptionId}`, {
-        license_key: licenseKey,
-        plan,
-        status: "active",
-        customer_email: customerEmail,
-      }),
-    ]);
+    const licenseKey = createLicenseKey(subscriptionId, plan, expiresAt);
 
     return res.status(200).json({
       success: true,

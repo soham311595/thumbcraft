@@ -156,10 +156,19 @@ export default function ThumbCraft() {
     }
   }, [nicheAnalysis])
 
+  function getFreeCount() {
+    if (typeof localStorage === "undefined") return 3
+    try { return parseInt(localStorage.getItem("thumbcraft-free-count") || "3", 10) } catch { return 3 }
+  }
+  function saveFreeCount(n) {
+    if (typeof localStorage === "undefined") return
+    try { localStorage.setItem("thumbcraft-free-count", String(n)) } catch {}
+  }
+
   // ─── Subscription / Rate Limit ──────────────────────────
   const [unlocked, setUnlocked] = useState(false)
-  const [remaining, setRemaining] = useState(3)
-  const [showUpsell, setShowUpsell] = useState(false)
+  const [remaining, setRemaining] = useState(() => getFreeCount())
+  const [showUpsell, setShowUpsell] = useState(() => getFreeCount() <= 0)
   const [purchaseLoading, setPurchaseLoading] = useState(false)
 
   const checkStatus = async () => {
@@ -174,9 +183,10 @@ export default function ThumbCraft() {
         setRemaining(Infinity)
         setShowUpsell(false)
       } else {
-        setRemaining(data.remaining)
+        const count = getFreeCount()
+        setRemaining(count)
         setUnlocked(false)
-        setShowUpsell(data.remaining <= 0)
+        setShowUpsell(count <= 0)
       }
     } catch {}
   }
@@ -328,7 +338,12 @@ export default function ThumbCraft() {
 
       const result = await generateThumbnail(promptText, null, refImages)
       setGeneratedThumb(result)
-      setRemaining((r) => Math.max(0, r - 1))
+      if (!unlocked) {
+        const newCount = Math.max(0, remaining - 1)
+        setRemaining(newCount)
+        saveFreeCount(newCount)
+        if (newCount <= 0) setShowUpsell(true)
+      }
       setStatus("Analyzing thumbnail...")
       triggerCritique(result)
     } catch (e) {

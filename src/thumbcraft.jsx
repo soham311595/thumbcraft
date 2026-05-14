@@ -148,6 +148,13 @@ export default function ThumbCraft() {
   const [critique, setCritique] = useState(null)
   const [critiqueLoading, setCritiqueLoading] = useState(false)
   const [critiqueError, setCritiqueError] = useState("")
+  const [editedTextOverlay, setEditedTextOverlay] = useState("")
+
+  useEffect(() => {
+    if (nicheAnalysis?.thumbnail_strategy?.text_overlay) {
+      setEditedTextOverlay(nicheAnalysis.thumbnail_strategy.text_overlay)
+    }
+  }, [nicheAnalysis])
 
   // ─── File handlers ──────────────────────────────────────
   const handleFileDrop = (e) => {
@@ -232,9 +239,17 @@ export default function ThumbCraft() {
       if (selectedFrameDataUrl) refImages.push(selectedFrameDataUrl)
       if (selectedInspiration?.thumbnailUrl) refImages.push(selectedInspiration.thumbnailUrl)
 
+      const modifiedNiche = {
+        ...nicheAnalysis,
+        thumbnail_strategy: {
+          ...nicheAnalysis.thumbnail_strategy,
+          text_overlay: editedTextOverlay
+        }
+      }
+
       const promptText = selectedFrameTimestamp != null
-        ? `Use this video frame as the visual starting point for a YouTube thumbnail. Keep the subject and composition of the frame but enhance it with bold colors, dramatic lighting, and text overlay. This MUST be a HIGH-CTR thumbnail that creates a curiosity gap — make viewers feel they NEED to click to find out what's inside.\n\n${IMAGE_PROMPT_GENERATOR(nicheAnalysis, null, 0)}`
-        : `Create a YouTube thumbnail based on this concept (no video frame reference needed). This MUST be a HIGH-CTR thumbnail that creates a curiosity gap — make viewers feel they NEED to click to find out what's inside.\n\n${IMAGE_PROMPT_GENERATOR(nicheAnalysis, null, 0)}`
+        ? `Use this video frame as the visual starting point for a YouTube thumbnail. Keep the subject and composition of the frame but enhance it with bold colors, dramatic lighting, and text overlay. This MUST be a HIGH-CTR thumbnail that creates a curiosity gap — make viewers feel they NEED to click to find out what's inside.\n\n${IMAGE_PROMPT_GENERATOR(modifiedNiche, null, 0)}`
+        : `Create a YouTube thumbnail based on this concept (no video frame reference needed). This MUST be a HIGH-CTR thumbnail that creates a curiosity gap — make viewers feel they NEED to click to find out what's inside.\n\n${IMAGE_PROMPT_GENERATOR(modifiedNiche, null, 0)}`
 
       const result = await generateThumbnail(promptText, null, refImages)
       setGeneratedThumb(result)
@@ -639,14 +654,24 @@ export default function ThumbCraft() {
                     <div style={{ fontSize: 10, fontWeight: 700, color: "#f72585", marginBottom: 8, fontFamily: "'Space Mono', monospace", letterSpacing: "0.1em" }}>
                       THUMBNAIL STRATEGY
                     </div>
-                    <div style={{ fontSize: 13, color: "var(--c-text-tertiary)", lineHeight: 1.7, marginBottom: 8 }}>
+                    <div style={{ fontSize: 13, color: "var(--c-text-tertiary)", lineHeight: 1.7, marginBottom: 12 }}>
                       {nicheAnalysis?.thumbnail_strategy?.concept}
                     </div>
-                    {nicheAnalysis?.thumbnail_strategy?.text_overlay && (
-                      <div style={{ fontSize: 22, fontWeight: 900, color: "#fff", fontFamily: "'Impact', sans-serif", letterSpacing: "0.02em" }}>
-                        "{nicheAnalysis.thumbnail_strategy.text_overlay}"
-                      </div>
-                    )}
+                    <div style={{ fontSize: 10, fontWeight: 700, color: "var(--c-text-dim)", marginBottom: 4, fontFamily: "'Space Mono', monospace" }}>
+                      TEXT OVERLAY
+                    </div>
+                    <input
+                      value={editedTextOverlay}
+                      onChange={(e) => setEditedTextOverlay(e.target.value)}
+                      placeholder="Enter thumbnail text..."
+                      style={{
+                        width: "100%", boxSizing: "border-box",
+                        background: theme.inputBg, border: `1px solid ${theme.inputBorder}`,
+                        borderRadius: 8, padding: "8px 12px", color: theme.textPrimary,
+                        fontSize: 18, fontWeight: 900, fontFamily: "'Impact', sans-serif",
+                        letterSpacing: "0.02em", outline: "none",
+                      }}
+                    />
                   </div>
                 </div>
               </div>
@@ -701,6 +726,24 @@ export default function ThumbCraft() {
                 </div>
               </div>
 
+              <div style={{ ...cardStyle, marginBottom: 20 }}>
+                <div style={{ fontSize: 10, fontWeight: 700, color: "var(--c-text-dim)", marginBottom: 4, fontFamily: "'Space Mono', monospace" }}>
+                  TEXT OVERLAY — edit and regenerate
+                </div>
+                <input
+                  value={editedTextOverlay}
+                  onChange={(e) => setEditedTextOverlay(e.target.value)}
+                  placeholder="Enter thumbnail text..."
+                  style={{
+                    width: "100%", boxSizing: "border-box",
+                    background: theme.inputBg, border: `1px solid ${theme.inputBorder}`,
+                    borderRadius: 8, padding: "8px 12px", color: theme.textPrimary,
+                    fontSize: 18, fontWeight: 900, fontFamily: "'Impact', sans-serif",
+                    letterSpacing: "0.02em", outline: "none",
+                  }}
+                />
+              </div>
+
               <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
                 <button onClick={() => {
                   const link = document.createElement("a")
@@ -711,8 +754,8 @@ export default function ThumbCraft() {
                   <Download size={14} /> Download
                 </button>
                 <button onClick={generateWithSelection} disabled={generating}
-                  style={{ ...btn(!generating), background: "var(--c-btn-bg)", color: generating ? "var(--c-text-dim)" : "var(--c-text-bright)" }}>
-                  {generating ? <><Loader2 size={14} className="spinner" /> Regenerating...</> : <><RefreshCw size={14} /> Regenerate</>}
+                  style={{ ...btn(!generating), background: generating ? "var(--c-btn-bg)" : "linear-gradient(135deg, #f72585, #7209b7)", color: generating ? "var(--c-text-dim)" : "#fff" }}>
+                  {generating ? <><Loader2 size={14} className="spinner" /> Regenerating...</> : <><RefreshCw size={14} /> Regenerate with Edits</>}
                 </button>
                 <button onClick={() => setStep(3)}
                   style={{

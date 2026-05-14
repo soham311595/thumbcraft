@@ -1,4 +1,5 @@
-const NEMOTRON_MODEL = "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free";
+const TEXT_MODEL = "inclusionai/ring-2.6-1t:free";
+const VISION_MODEL = "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free";
 
 // Strip <think>...</think> reasoning blocks that Nemotron emits before its answer
 function extractText(data) {
@@ -62,7 +63,7 @@ export async function analyzeText(prompt, systemPrompt, options = {}) {
     : [{ role: "user", content: prompt }];
 
   const body = {
-    model: NEMOTRON_MODEL,
+    model: TEXT_MODEL,
     messages,
   };
   if (options.reasoning !== false) {
@@ -98,7 +99,7 @@ export async function analyzeVision(imageUrls, textContent, systemPrompt) {
   ];
 
   const data = await orChat({
-    model: NEMOTRON_MODEL,
+    model: VISION_MODEL,
     messages,
     reasoning: { enabled: true },
   });

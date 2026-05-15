@@ -10,7 +10,7 @@ function fmt(sec) {
   return `${m}:${s.toFixed(3).padStart(7, "0")}`
 }
 
-export default function FramePicker({ videoFile, recommendedTimestamps, theme, onSelectFrame }) {
+export default function FramePicker({ videoFile, recommendedTimestamps, theme, onSelectFrame, jumpToTimestamp }) {
   const videoRef = useRef(null)
   const canvasRef = useRef(null)
   const [loaded, setLoaded] = useState(false)
@@ -90,6 +90,10 @@ export default function FramePicker({ videoFile, recommendedTimestamps, theme, o
     const dataUrl = c.toDataURL("image/png")
     setCaptured((prev) => [...prev, { dataUrl, timestamp: currentTime }])
   }, [currentTime])
+
+  useEffect(() => {
+    if (jumpToTimestamp != null) seek(jumpToTimestamp)
+  }, [jumpToTimestamp, seek])
 
   useEffect(() => {
     const handler = (e) => {

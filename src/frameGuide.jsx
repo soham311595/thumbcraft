@@ -11,7 +11,13 @@ const guidanceIcons = {
   recommended_approach: Compass,
 }
 
-export default function FrameGuide({ videoFile, transcript, niche, selectedInspiration, theme, onSelectFrame }) {
+function formatTimestamp(sec) {
+  const m = Math.floor(sec / 60)
+  const s = Math.floor(sec % 60)
+  return `${m}:${s.toString().padStart(2, "0")}`
+}
+
+export default function FrameGuide({ videoFile, transcript, niche, selectedInspiration, theme, onSelectFrame, thumbnailMoments }) {
   const cardStyle = { background: theme.cardBg, border: `1px solid ${theme.cardBorder}`, borderRadius: 14, padding: 20 }
   const [guidance, setGuidance] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -49,6 +55,8 @@ export default function FrameGuide({ videoFile, transcript, niche, selectedInspi
     }
     run()
   }, [niche, transcript, selectedInspiration])
+
+  const [jumpToTimestamp, setJumpToTimestamp] = useState(null)
 
   const handleFrameSelect = (dataUrl, timestamp) => {
     onSelectFrame(dataUrl, timestamp)
@@ -160,6 +168,44 @@ export default function FrameGuide({ videoFile, transcript, niche, selectedInspi
         </div>
       </div>
 
+      {thumbnailMoments && thumbnailMoments.length > 0 && (
+        <div style={{ marginBottom: 16 }}>
+          <div style={{ fontSize: 10, fontWeight: 700, color: theme.textDim, marginBottom: 8, fontFamily: "'Space Mono', monospace", letterSpacing: "0.1em" }}>
+            KEY MOMENTS
+          </div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {thumbnailMoments.map((m, i) => (
+              <button
+                key={i}
+                onClick={() => setJumpToTimestamp(m.timestamp)}
+                style={{
+                  background: "rgba(247,37,133,0.08)",
+                  border: "1px solid rgba(247,37,133,0.2)",
+                  color: theme.textBright, borderRadius: 10,
+                  padding: "8px 14px", cursor: "pointer",
+                  fontSize: 12, fontFamily: "'Space Mono', monospace",
+                  textAlign: "left", lineHeight: 1.4,
+                  transition: "all 0.2s",
+                  maxWidth: 320,
+                }}
+                onMouseEnter={(e) => e.currentTarget.style.background = "rgba(247,37,133,0.15)"}
+                onMouseLeave={(e) => e.currentTarget.style.background = "rgba(247,37,133,0.08)"}
+              >
+                <span style={{ color: "#f72585", fontWeight: 700 }}>
+                  {formatTimestamp(m.timestamp)}
+                </span>
+                <span style={{ color: theme.textMuted, marginLeft: 6 }}>
+                  — {m.why_clickable}
+                </span>
+                <div style={{ fontSize: 10, color: theme.textDim, marginTop: 2 }}>
+                  "{m.quote?.slice(0, 80)}{m.quote?.length > 80 ? "..." : ""}"
+                </div>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div style={{
         display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap",
         marginBottom: 12, padding: "10px 14px",
@@ -192,6 +238,7 @@ export default function FrameGuide({ videoFile, transcript, niche, selectedInspi
           theme={theme}
           recommendedTimestamps={[]}
           onSelectFrame={handleFrameSelect}
+          jumpToTimestamp={jumpToTimestamp}
         />
       )}
     </div>

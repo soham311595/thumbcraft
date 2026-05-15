@@ -708,6 +708,7 @@ Text overlay: "${editedTextOverlay}"`
             selectedInspiration={selectedInspiration}
             theme={theme}
             onSelectFrame={handleFrameCaptured}
+            thumbnailMoments={nicheAnalysis?.content?.thumbnail_moments}
           />
 
           {selectedFrameDataUrl && (

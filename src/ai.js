@@ -111,14 +111,10 @@ export async function analyzeVision(imageUrls, textContent, systemPrompt) {
 }
 
 // ─────────────────────────────────────────────────────────
-// IMAGE GENERATION - Riverflow via OpenRouter
-// Returns base64 data URL - caller must upload to storage or use directly
+// IMAGE GENERATION - Gemini via OpenRouter
+// Returns { dataUrl, prompt }
 // ─────────────────────────────────────────────────────────
-export async function generateThumbnail(prompt, imageConfig, referenceImages = []) {
-  const licenseKey = typeof localStorage !== "undefined" ? localStorage.getItem("thumbcraft-license") : ""
-  const headers = { "Content-Type": "application/json" }
-  if (licenseKey) headers["x-license-key"] = licenseKey
-
+export async function generateThumbnail(prompt, referenceImages = []) {
   const body = { prompt };
   if (referenceImages.length > 0) {
     body.reference_images = referenceImages;
@@ -126,23 +122,14 @@ export async function generateThumbnail(prompt, imageConfig, referenceImages = [
 
   const res = await fetch("/api/generate-image", {
     method: "POST",
-    headers,
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
 
   const raw = await res.text();
   let data;
   try { data = JSON.parse(raw); } catch { throw new Error(raw.slice(0, 300)); }
-  if (!res.ok) {
-    if (res.status === 402) {
-      throw new Error(data.exhausted ? "MONTHLY_LIMIT_REACHED" : "FREE_LIMIT_REACHED");
-    }
-    throw new Error(data.error || "Image generation failed");
-  }
-
-  if (data.license_key && typeof localStorage !== "undefined") {
-    try { localStorage.setItem("thumbcraft-license", data.license_key) } catch {}
-  }
+  if (!res.ok) throw new Error(data.error || "Image generation failed");
 
   return data;
 }

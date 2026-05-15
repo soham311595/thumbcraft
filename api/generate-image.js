@@ -1,6 +1,3 @@
-import { checkGenerationLimit, incrementGenerationCount } from "../src/rate-limit.js";
-import { getLastSeq, setLastSeq } from "../src/nonce-store.js";
-
 export default async function handler(req, res) {
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Method not allowed" });
@@ -9,27 +6,6 @@ export default async function handler(req, res) {
   const apiKey = process.env.OPENROUTER_API_KEY;
   if (!apiKey) {
     return res.status(500).json({ error: "OPENROUTER_API_KEY not configured" });
-  }
-
-  const ip = req.headers["x-forwarded-for"]?.split(",")[0]?.trim() ||
-             req.socket?.remoteAddress ||
-             "unknown";
-  const licenseKey = req.headers["x-license-key"] || "";
-
-  const limit = checkGenerationLimit(ip, licenseKey);
-  if (!limit.allowed && limit.exhausted) {
-    return res.status(402).json({ error: "Monthly limit reached (50/50). Resets next month.", exhausted: true });
-  }
-  if (!limit.allowed) {
-    return res.status(402).json({ error: "Free limit reached" });
-  }
-
-  // Anti-replay: check sequence number hasn't been used before
-  if (limit.isPro) {
-    const lastSeq = await getLastSeq(limit.subscriptionId);
-    if (limit.seq <= lastSeq) {
-      return res.status(402).json({ error: "Monthly limit reached (50/50). Resets next month.", exhausted: true });
-    }
   }
 
   const { prompt, reference_images } = req.body;
@@ -81,20 +57,10 @@ export default async function handler(req, res) {
       return res.status(500).json({ error: "No image in model response" });
     }
 
-    // Record this seq as used (prevents replay of this token)
-    if (limit.isPro) {
-      await setLastSeq(limit.subscriptionId, limit.seq);
-    }
-
-    const newLicenseKey = incrementGenerationCount(ip, licenseKey);
-
-    const result = {
+    return res.status(200).json({
       dataUrl: images[0].image_url.url,
       prompt,
-    };
-    if (newLicenseKey) result.license_key = newLicenseKey;
-
-    return res.status(200).json(result);
+    });
   } catch (error) {
     return res.status(500).json({ error: error.message });
   }

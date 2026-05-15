@@ -5,6 +5,7 @@ import { useTheme } from "./theme"
 import FrameGuide from "./frameGuide"
 import Inspiration from "./inspiration"
 import ThumbnailCritique from "./thumbnailCritique"
+import AiEditChat from "./AiEditChat"
 
 import {
   NICHE_ANALYSIS_PROMPT,
@@ -16,14 +17,16 @@ import {
   Download,
   Loader2,
   Moon,
-  RefreshCw,
   Sparkles,
   Sun,
   Upload,
+  ExternalLink,
 } from "lucide-react"
 
 const STEPS = ["input", "niche", "inspiration", "frame", "generate"]
 const STEP_LABELS = ["Video", "Niche", "Inspire", "Frame", "Generate"]
+
+const PROMO_CODES = ["LAUNCH01", "FRIEND01", "FRIEND02", "BETA01"]
 
 function extractVideoId(input) {
   const trimmed = input.trim()
@@ -113,6 +116,13 @@ function Stepper({ step, onStep, steps, labels }) {
   )
 }
 
+function getSession() {
+  try { return JSON.parse(localStorage.getItem("thumbcraft-session") || "null") } catch { return null }
+}
+function saveSession(s) {
+  localStorage.setItem("thumbcraft-session", JSON.stringify(s))
+}
+
 export default function ThumbCraft() {
   const { theme, themeName, toggleTheme } = useTheme()
   const [step, setStep] = useState(0)
@@ -150,96 +160,35 @@ export default function ThumbCraft() {
   const [critiqueError, setCritiqueError] = useState("")
   const [editedTextOverlay, setEditedTextOverlay] = useState("")
 
+  // Session / paywall
+  const [session, setSession] = useState(() => getSession())
+  const [showPaywall, setShowPaywall] = useState(false)
+  const [promoInput, setPromoInput] = useState("")
+  const [promoError, setPromoError] = useState("")
+
+  const hasRemaining = session && session.remaining > 0
+
   useEffect(() => {
     if (nicheAnalysis?.thumbnail_strategy?.text_overlay) {
       setEditedTextOverlay(nicheAnalysis.thumbnail_strategy.text_overlay)
     }
   }, [nicheAnalysis])
 
-  function getFreeCount() {
-    if (typeof localStorage === "undefined") return 3
-    try { return parseInt(localStorage.getItem("thumbcraft-free-count") || "3", 10) } catch { return 3 }
-  }
-  function saveFreeCount(n) {
-    if (typeof localStorage === "undefined") return
-    try { localStorage.setItem("thumbcraft-free-count", String(n)) } catch {}
-  }
-
-  // ─── Subscription / Rate Limit ──────────────────────────
-  const [unlocked, setUnlocked] = useState(false)
-  const [remaining, setRemaining] = useState(() => getFreeCount())
-  const [showUpsell, setShowUpsell] = useState(() => getFreeCount() <= 0)
-  const [purchaseLoading, setPurchaseLoading] = useState(false)
-
-  const checkStatus = async () => {
-    const licenseKey = typeof localStorage !== "undefined" ? localStorage.getItem("thumbcraft-license") : ""
-    try {
-      const res = await fetch("/api/verify-status", {
-        headers: licenseKey ? { "x-license-key": licenseKey } : {}
-      })
-      const data = await res.json()
-      if (data.unlocked) {
-        setUnlocked(true)
-        setRemaining(data.remaining)
-        setShowUpsell(data.remaining <= 0)
-      } else {
-        const count = getFreeCount()
-        setRemaining(count)
-        setUnlocked(false)
-        setShowUpsell(count <= 0)
-      }
-    } catch {}
-  }
-
-  const handleCheckoutRedirect = async (sessionId) => {
-    try {
-      const res = await fetch("/api/verify-checkout", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ session_id: sessionId }),
-      })
-      const data = await res.json()
-      if (data.success) {
-        localStorage.setItem("thumbcraft-license", data.license_key)
-        setUnlocked(true)
-        setRemaining(Infinity)
-        setShowUpsell(false)
-        window.history.replaceState({}, "", "/")
-      }
-    } catch {}
-  }
-
-  const handleSubscribe = async (plan) => {
-    setPurchaseLoading(true)
-    setError("")
-    try {
-      const res = await fetch("/api/create-checkout", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ plan }),
-      })
-      const data = await res.json()
-      if (data.url) window.location.href = data.url
-      else throw new Error(data.error || "Failed to create checkout")
-    } catch (e) {
-      setError(e.message)
-    } finally {
-      setPurchaseLoading(false)
-    }
-  }
-
+  // Detect Stripe payment success redirect
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
-    const sessionId = params.get("session_id")
-    if (sessionId) {
-      handleCheckoutRedirect(sessionId)
-      return
+    if (params.get("payment") === "success") {
+      saveSession({ remaining: 4 })
+      setSession({ remaining: 4 })
+      window.history.replaceState({}, "", "/")
     }
-    checkStatus()
   }, [])
 
+  // Auto-show paywall when arriving at step 4 without credits
   useEffect(() => {
-    if (step === 4) checkStatus()
+    if (step === 4 && !generatedThumb && !hasRemaining) {
+      setShowPaywall(true)
+    }
   }, [step])
 
   // ─── File handlers ──────────────────────────────────────
@@ -313,6 +262,11 @@ export default function ThumbCraft() {
   // ─── Step 4: Generate ───────────────────────────────────
   const generateWithSelection = async () => {
     if (!nicheAnalysis) return
+    if (!hasRemaining) {
+      setShowPaywall(true)
+      return
+    }
+
     setGenerating(true)
     setError("")
     setCritique(null)
@@ -328,40 +282,53 @@ export default function ThumbCraft() {
         ...nicheAnalysis,
         thumbnail_strategy: {
           ...nicheAnalysis.thumbnail_strategy,
-          text_overlay: editedTextOverlay
-        }
+          text_overlay: editedTextOverlay,
+        },
       }
 
       const promptText = selectedFrameTimestamp != null
         ? `Use this video frame as the visual starting point for a YouTube thumbnail. Keep the subject and composition of the frame but enhance it with bold colors, dramatic lighting, and text overlay. This MUST be a HIGH-CTR thumbnail that creates a curiosity gap — make viewers feel they NEED to click to find out what's inside.\n\n${IMAGE_PROMPT_GENERATOR(modifiedNiche, null, 0)}`
         : `Create a YouTube thumbnail based on this concept (no video frame reference needed). This MUST be a HIGH-CTR thumbnail that creates a curiosity gap — make viewers feel they NEED to click to find out what's inside.\n\n${IMAGE_PROMPT_GENERATOR(modifiedNiche, null, 0)}`
 
-      const result = await generateThumbnail(promptText, null, refImages)
+      const result = await generateThumbnail(promptText, refImages)
       setGeneratedThumb(result)
-      if (!unlocked) {
-        const newCount = Math.max(0, remaining - 1)
-        setRemaining(newCount)
-        saveFreeCount(newCount)
-        if (newCount <= 0) setShowUpsell(true)
+
+      const s = getSession()
+      if (s) {
+        s.remaining = Math.max(0, s.remaining - 1)
+        saveSession(s)
+        setSession({ ...s })
       }
+
       setStatus("Analyzing thumbnail...")
       triggerCritique(result)
     } catch (e) {
-      if (e.message === "MONTHLY_LIMIT_REACHED") {
-        setShowUpsell(true)
-        setRemaining(0)
-        setError("You've used all 50 generations this month. Resets next month.")
-      } else if (e.message === "FREE_LIMIT_REACHED") {
-        setShowUpsell(true)
-        setRemaining(0)
-        setError("You've used all 3 free generations. Subscribe for 50/month.")
-      } else {
-        setError(e.message)
-      }
+      setError(e.message)
     } finally {
       setGenerating(false)
       setStatus("")
     }
+  }
+
+  const handleEdit = async (editRequest, prevThumbUrl) => {
+    const promptText = `Edit this YouTube thumbnail based on this request: "${editRequest}"
+
+Keep the subject and composition but make the requested changes.
+Original concept: ${nicheAnalysis.thumbnail_strategy?.concept}
+Text overlay: "${editedTextOverlay}"`
+
+    const result = await generateThumbnail(promptText, [prevThumbUrl])
+
+    const s = getSession()
+    if (s) {
+      s.remaining = Math.max(0, s.remaining - 1)
+      saveSession(s)
+      setSession({ ...s })
+    }
+
+    setGeneratedThumb(result)
+    triggerCritique(result)
+    return result
   }
 
   const triggerCritique = async (thumb) => {
@@ -391,6 +358,39 @@ export default function ThumbCraft() {
       4: generatedThumb != null,
     }
     if (canGo[s]) setStep(s)
+  }
+
+  // ─── Paywall handlers ────────────────────────────────────
+  const handleStripeClick = () => {
+    const link = import.meta.env.VITE_STRIPE_PAYMENT_LINK
+    if (link) window.open(link, "_blank")
+  }
+
+  const handleRedeemCode = () => {
+    const code = promoInput.trim().toUpperCase()
+    setPromoError("")
+
+    const usedCodes = JSON.parse(localStorage.getItem("thumbcraft-used-codes") || "[]")
+    if (!PROMO_CODES.includes(code)) {
+      setPromoError("Invalid promo code")
+      return
+    }
+    if (usedCodes.includes(code)) {
+      setPromoError("Code already used on this device")
+      return
+    }
+    usedCodes.push(code)
+    localStorage.setItem("thumbcraft-used-codes", JSON.stringify(usedCodes))
+    saveSession({ remaining: 4 })
+    setSession({ remaining: 4 })
+    setShowPaywall(false)
+    setPromoInput("")
+  }
+
+  const handleStartNew = () => {
+    setGeneratedThumb(null)
+    setCritique(null)
+    setStep(0)
   }
 
   // ─── Render helpers ──────────────────────────────────────
@@ -462,6 +462,11 @@ export default function ThumbCraft() {
         </div>
 
         <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8 }}>
+          {hasRemaining && (
+            <span style={{ fontSize: 11, color: "var(--c-text-muted)", fontFamily: "'Space Mono', monospace" }}>
+              {session.remaining} gen left
+            </span>
+          )}
           <button onClick={toggleTheme} title={`Switch to ${themeName === "dark" ? "light" : "dark"} mode`}
             style={{
               background: "transparent", border: `1px solid ${theme.textDim}`,
@@ -705,120 +710,143 @@ export default function ThumbCraft() {
       {step === 4 && (
         <div>
           {!generatedThumb ? (
-            showUpsell && !unlocked ? (
-              <div style={{ maxWidth: 500, margin: "0 auto", textAlign: "center", padding: "40px 20px" }}>
-                <div style={{ fontSize: 48, marginBottom: 16 }}>🔒</div>
-                <h3 style={{ fontSize: 20, fontWeight: 700, color: "#fff", margin: "0 0 8px" }}>
-                  Free Generations Used Up
+            showPaywall ? (
+              <div style={{ maxWidth: 480, margin: "0 auto", textAlign: "center", padding: "40px 20px" }}>
+                <div style={{ fontSize: 48, marginBottom: 16 }}>✨</div>
+                <h3 style={{ fontSize: 22, fontWeight: 700, color: "#fff", margin: "0 0 8px" }}>
+                  $5 per thumbnail
                 </h3>
-                <p style={{ fontSize: 14, color: "var(--c-text-secondary)", marginBottom: 24, lineHeight: 1.6 }}>
-                  You've used all 3 free thumbnail generations.
-                  Subscribe to ThumbCraft Pro for 50 generations per month.
+                <p style={{ fontSize: 14, color: "var(--c-text-secondary)", marginBottom: 6, lineHeight: 1.6 }}>
+                  Includes up to <strong style={{ color: "#fff" }}>3 regenerations</strong> with AI editing.
                 </p>
-                <div style={{ display: "flex", flexDirection: "column", gap: 12, alignItems: "center" }}>
-                  <button onClick={() => handleSubscribe("monthly")} disabled={purchaseLoading}
-                    style={btn(!purchaseLoading)}>
-                    {purchaseLoading ? "Opening checkout..." : "Subscribe Monthly — $19/mo"}
-                  </button>
-                  <button onClick={() => handleSubscribe("annual")} disabled={purchaseLoading}
-                    style={{
-                      ...btn(!purchaseLoading),
-                      background: "transparent", border: "1px solid var(--c-border-subtle)",
-                      color: purchaseLoading ? "var(--c-text-dim)" : "var(--c-text-bright)",
-                    }}>
-                    Subscribe Annual — $180/yr (save 21%)
-                  </button>
+                <p style={{ fontSize: 12, color: "var(--c-text-muted)", marginBottom: 28, fontFamily: "'Space Mono', monospace" }}>
+                  4 generations total — pay once, refine until perfect
+                </p>
+
+                <button onClick={handleStripeClick} style={btn(true)}>
+                  <ExternalLink size={14} /> Pay with Stripe
+                </button>
+
+                <div style={{ marginTop: 32, paddingTop: 24, borderTop: "1px solid var(--c-border-subtle)" }}>
+                  <div style={{ fontSize: 11, color: "var(--c-text-muted)", marginBottom: 10, fontFamily: "'Space Mono', monospace" }}>
+                    or use a promo code
+                  </div>
+                  <div style={{ display: "flex", gap: 8, maxWidth: 360, margin: "0 auto" }}>
+                    <input
+                      value={promoInput}
+                      onChange={(e) => { setPromoInput(e.target.value); setPromoError("") }}
+                      onKeyDown={(e) => { if (e.key === "Enter") handleRedeemCode() }}
+                      placeholder="Enter code"
+                      style={{
+                        flex: 1, boxSizing: "border-box",
+                        background: theme.inputBg, border: `1px solid ${theme.inputBorder}`,
+                        borderRadius: 10, padding: "10px 14px", color: theme.textPrimary,
+                        fontSize: 13, fontFamily: "'Space Mono', monospace",
+                        textTransform: "uppercase", outline: "none",
+                      }}
+                    />
+                    <button onClick={handleRedeemCode} style={btn(!!promoInput.trim())}>
+                      Redeem
+                    </button>
+                  </div>
+                  {promoError && (
+                    <div style={{ fontSize: 12, color: "#f72585", marginTop: 8 }}>
+                      {promoError}
+                    </div>
+                  )}
                 </div>
               </div>
             ) : (
-            <div>
-              <div style={{ marginBottom: 22 }}>
-                <h2 style={{ fontSize: 16, fontWeight: 700, color: "#fff", margin: "0 0 4px" }}>
-                  Generate Thumbnail
-                </h2>
-                <p style={{ fontSize: 12, color: "var(--c-text-muted)", margin: "0 0 2px" }}>
-                  {selectedFrameTimestamp != null
-                    ? `Using frame at ${formatTimestamp(selectedFrameTimestamp)} + inspiration thumbnail`
-                    : `Using inspiration thumbnail only`
-                  }
-                </p>
-                <p style={{ fontSize: 11, color: "var(--c-text-muted)", margin: 0, fontFamily: "'Space Mono', monospace" }}>
-                  {unlocked ? `${remaining}/50 generations this month` : `${remaining} free generation${remaining === 1 ? "" : "s"} remaining`}
-                </p>
-              </div>
+              <div>
+                <div style={{ marginBottom: 22 }}>
+                  <h2 style={{ fontSize: 16, fontWeight: 700, color: "#fff", margin: "0 0 4px" }}>
+                    Generate Thumbnail
+                  </h2>
+                  <p style={{ fontSize: 12, color: "var(--c-text-muted)", margin: "0 0 2px" }}>
+                    {selectedFrameTimestamp != null
+                      ? `Using frame at ${formatTimestamp(selectedFrameTimestamp)} + inspiration thumbnail`
+                      : `Using inspiration thumbnail only`
+                    }
+                  </p>
+                  {hasRemaining && (
+                    <p style={{ fontSize: 11, color: "var(--c-text-muted)", margin: 0, fontFamily: "'Space Mono', monospace" }}>
+                      {session.remaining} generation{session.remaining !== 1 ? "s" : ""} remaining
+                    </p>
+                  )}
+                </div>
 
-              <div style={{ display: "flex", gap: 16, flexWrap: "wrap", marginBottom: 24, alignItems: "flex-start" }}>
-                {selectedFrameDataUrl && (
-                  <div style={{ width: 240, flexShrink: 0 }}>
-                    <div style={{ fontSize: 10, fontWeight: 700, color: "var(--c-text-dim)", marginBottom: 4, fontFamily: "'Space Mono', monospace" }}>
-                      CAPTURED FRAME
+                <div style={{ display: "flex", gap: 16, flexWrap: "wrap", marginBottom: 24, alignItems: "flex-start" }}>
+                  {selectedFrameDataUrl && (
+                    <div style={{ width: 240, flexShrink: 0 }}>
+                      <div style={{ fontSize: 10, fontWeight: 700, color: "var(--c-text-dim)", marginBottom: 4, fontFamily: "'Space Mono', monospace" }}>
+                        CAPTURED FRAME
+                      </div>
+                      <div style={{ borderRadius: 10, overflow: "hidden", border: "2px solid #f72585" }}>
+                        <img src={selectedFrameDataUrl} alt="Selected frame" style={{ width: "100%", display: "block" }} />
+                      </div>
+                      <div style={{ marginTop: 4, textAlign: "center", fontSize: 10, color: "var(--c-text-dim)", fontFamily: "'Space Mono', monospace" }}>
+                        {formatTimestamp(selectedFrameTimestamp)}
+                      </div>
                     </div>
-                    <div style={{ borderRadius: 10, overflow: "hidden", border: "2px solid #f72585" }}>
-                      <img src={selectedFrameDataUrl} alt="Selected frame" style={{ width: "100%", display: "block" }} />
-                    </div>
-                    <div style={{ marginTop: 4, textAlign: "center", fontSize: 10, color: "var(--c-text-dim)", fontFamily: "'Space Mono', monospace" }}>
-                      {formatTimestamp(selectedFrameTimestamp)}
-                    </div>
-                  </div>
-                )}
+                  )}
 
-                {selectedInspiration && (
-                  <div style={{ width: 240, flexShrink: 0 }}>
-                    <div style={{ fontSize: 10, fontWeight: 700, color: "var(--c-text-dim)", marginBottom: 4, fontFamily: "'Space Mono', monospace" }}>
-                      INSPIRATION
+                  {selectedInspiration && (
+                    <div style={{ width: 240, flexShrink: 0 }}>
+                      <div style={{ fontSize: 10, fontWeight: 700, color: "var(--c-text-dim)", marginBottom: 4, fontFamily: "'Space Mono', monospace" }}>
+                        INSPIRATION
+                      </div>
+                      <div style={{ borderRadius: 10, overflow: "hidden", border: "2px solid #7209b7" }}>
+                        <img src={selectedInspiration.thumbnailUrl} alt="" style={{ width: "100%", display: "block" }} />
+                      </div>
+                      <div style={{ marginTop: 4, textAlign: "center", fontSize: 10, color: "var(--c-text-dim)", fontFamily: "'Space Mono', monospace" }}>
+                        {selectedInspiration.viralRatio}x viral
+                      </div>
                     </div>
-                    <div style={{ borderRadius: 10, overflow: "hidden", border: "2px solid #7209b7" }}>
-                      <img src={selectedInspiration.thumbnailUrl} alt="" style={{ width: "100%", display: "block" }} />
-                    </div>
-                    <div style={{ marginTop: 4, textAlign: "center", fontSize: 10, color: "var(--c-text-dim)", fontFamily: "'Space Mono', monospace" }}>
-                      {selectedInspiration.viralRatio}x viral
-                    </div>
-                  </div>
-                )}
+                  )}
 
-                <div style={{ flex: 1, minWidth: 280 }}>
-                  <div style={cardStyle}>
-                    <div style={{ fontSize: 10, fontWeight: 700, color: "#f72585", marginBottom: 8, fontFamily: "'Space Mono', monospace", letterSpacing: "0.1em" }}>
-                      THUMBNAIL STRATEGY
+                  <div style={{ flex: 1, minWidth: 280 }}>
+                    <div style={cardStyle}>
+                      <div style={{ fontSize: 10, fontWeight: 700, color: "#f72585", marginBottom: 8, fontFamily: "'Space Mono', monospace", letterSpacing: "0.1em" }}>
+                        THUMBNAIL STRATEGY
+                      </div>
+                      <div style={{ fontSize: 13, color: "var(--c-text-tertiary)", lineHeight: 1.7, marginBottom: 12 }}>
+                        {nicheAnalysis?.thumbnail_strategy?.concept}
+                      </div>
+                      <div style={{ fontSize: 10, fontWeight: 700, color: "var(--c-text-dim)", marginBottom: 4, fontFamily: "'Space Mono', monospace" }}>
+                        TEXT OVERLAY
+                      </div>
+                      <input
+                        value={editedTextOverlay}
+                        onChange={(e) => setEditedTextOverlay(e.target.value)}
+                        placeholder="Enter thumbnail text..."
+                        style={{
+                          width: "100%", boxSizing: "border-box",
+                          background: theme.inputBg, border: `1px solid ${theme.inputBorder}`,
+                          borderRadius: 8, padding: "8px 12px", color: theme.textPrimary,
+                          fontSize: 18, fontWeight: 900, fontFamily: "'Impact', sans-serif",
+                          letterSpacing: "0.02em", outline: "none",
+                        }}
+                      />
                     </div>
-                    <div style={{ fontSize: 13, color: "var(--c-text-tertiary)", lineHeight: 1.7, marginBottom: 12 }}>
-                      {nicheAnalysis?.thumbnail_strategy?.concept}
-                    </div>
-                    <div style={{ fontSize: 10, fontWeight: 700, color: "var(--c-text-dim)", marginBottom: 4, fontFamily: "'Space Mono', monospace" }}>
-                      TEXT OVERLAY
-                    </div>
-                    <input
-                      value={editedTextOverlay}
-                      onChange={(e) => setEditedTextOverlay(e.target.value)}
-                      placeholder="Enter thumbnail text..."
-                      style={{
-                        width: "100%", boxSizing: "border-box",
-                        background: theme.inputBg, border: `1px solid ${theme.inputBorder}`,
-                        borderRadius: 8, padding: "8px 12px", color: theme.textPrimary,
-                        fontSize: 18, fontWeight: 900, fontFamily: "'Impact', sans-serif",
-                        letterSpacing: "0.02em", outline: "none",
-                      }}
-                    />
                   </div>
                 </div>
-              </div>
 
-              <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-                <button onClick={generateWithSelection} disabled={generating}
-                  style={btn(!generating)}>
-                  {generating ? <><Loader2 size={14} className="spinner" /> Generating...</> : <><Sparkles size={14} /> Generate Thumbnail →</>}
-                </button>
-                <button onClick={() => setStep(3)}
-                  style={{
-                    background: "transparent", border: "1px solid var(--c-border-subtle)",
-                    color: "var(--c-text-secondary)", borderRadius: 12,
-                    padding: "13px 22px", fontSize: 13, fontWeight: 600, cursor: "pointer",
-                    fontFamily: "'Space Mono', monospace",
-                  }}>
-                  ← Capture Different Frame
-                </button>
+                <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+                  <button onClick={generateWithSelection} disabled={generating}
+                    style={btn(!generating)}>
+                    {generating ? <><Loader2 size={14} className="spinner" /> Generating...</> : <><Sparkles size={14} /> Generate Thumbnail →</>}
+                  </button>
+                  <button onClick={() => setStep(3)}
+                    style={{
+                      background: "transparent", border: "1px solid var(--c-border-subtle)",
+                      color: "var(--c-text-secondary)", borderRadius: 12,
+                      padding: "13px 22px", fontSize: 13, fontWeight: 600, cursor: "pointer",
+                      fontFamily: "'Space Mono', monospace",
+                    }}>
+                    ← Capture Different Frame
+                  </button>
+                </div>
               </div>
-            </div>
             )
           ) : (
             <div>
@@ -854,23 +882,25 @@ export default function ThumbCraft() {
                 </div>
               </div>
 
-              <div style={{ ...cardStyle, marginBottom: 20 }}>
-                <div style={{ fontSize: 10, fontWeight: 700, color: "var(--c-text-dim)", marginBottom: 4, fontFamily: "'Space Mono', monospace" }}>
-                  TEXT OVERLAY — edit and regenerate
-                </div>
-                <input
-                  value={editedTextOverlay}
-                  onChange={(e) => setEditedTextOverlay(e.target.value)}
-                  placeholder="Enter thumbnail text..."
-                  style={{
-                    width: "100%", boxSizing: "border-box",
-                    background: theme.inputBg, border: `1px solid ${theme.inputBorder}`,
-                    borderRadius: 8, padding: "8px 12px", color: theme.textPrimary,
-                    fontSize: 18, fontWeight: 900, fontFamily: "'Impact', sans-serif",
-                    letterSpacing: "0.02em", outline: "none",
-                  }}
+              <div style={{ marginBottom: 24 }}>
+                <AiEditChat
+                  initialThumbUrl={generatedThumb.dataUrl || generatedThumb.url}
+                  hasCredits={hasRemaining}
+                  onEdit={handleEdit}
+                  theme={theme}
                 />
               </div>
+
+              {!hasRemaining && (
+                <div style={{ textAlign: "center", marginBottom: 24, padding: "16px 0", borderTop: "1px solid var(--c-border-subtle)", borderBottom: "1px solid var(--c-border-subtle)" }}>
+                  <p style={{ fontSize: 13, color: "var(--c-text-muted)", margin: "0 0 10px" }}>
+                    You've used all regenerations for this thumbnail.
+                  </p>
+                  <button onClick={handleStartNew} style={btn(true)}>
+                    Start a new thumbnail →
+                  </button>
+                </div>
+              )}
 
               <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
                 <button onClick={() => {
@@ -881,19 +911,17 @@ export default function ThumbCraft() {
                 }} style={btn(true)}>
                   <Download size={14} /> Download
                 </button>
-                <button onClick={generateWithSelection} disabled={generating}
-                  style={{ ...btn(!generating), background: generating ? "var(--c-btn-bg)" : "linear-gradient(135deg, #f72585, #7209b7)", color: generating ? "var(--c-text-dim)" : "#fff" }}>
-                  {generating ? <><Loader2 size={14} className="spinner" /> Regenerating...</> : <><RefreshCw size={14} /> Regenerate with Edits</>}
-                </button>
-                <button onClick={() => setStep(3)}
-                  style={{
-                    background: "transparent", border: "1px solid var(--c-border-subtle)",
-                    color: "var(--c-text-secondary)", borderRadius: 12,
-                    padding: "13px 22px", fontSize: 13, fontWeight: 600, cursor: "pointer",
-                    fontFamily: "'Space Mono', monospace",
-                  }}>
-                  ← Different Frame
-                </button>
+                {hasRemaining && (
+                  <button onClick={handleStartNew}
+                    style={{
+                      background: "transparent", border: "1px solid var(--c-border-subtle)",
+                      color: "var(--c-text-secondary)", borderRadius: 12,
+                      padding: "13px 22px", fontSize: 13, fontWeight: 600, cursor: "pointer",
+                      fontFamily: "'Space Mono', monospace",
+                    }}>
+                    Start a new thumbnail
+                  </button>
+                )}
               </div>
 
               <ThumbnailCritique
@@ -909,7 +937,7 @@ export default function ThumbCraft() {
 
       <div style={{ marginTop: 48, paddingTop: 16, borderTop: "1px solid var(--c-divider)", fontSize: 10, color: "var(--c-text-very-dim)", fontFamily: "'Space Mono', monospace", display: "flex", justifyContent: "space-between" }}>
         <span>YouTube Transcript API · OpenRouter</span>
-        <span>{unlocked ? `✦ ${remaining}/50` : `${remaining} / 3 free`}</span>
+        <span>{hasRemaining ? `${session.remaining} / 4` : ""}</span>
       </div>
 
       <style>{`

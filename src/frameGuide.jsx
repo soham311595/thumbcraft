@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react"
 import { Loader2, Lightbulb, Target, Layers, Compass } from "lucide-react"
-import { analyzeText } from "./ai"
-import { FRAME_GUIDANCE_PROMPT } from "./prompts"
+import { analyzeVision } from "./ai"
+import { FRAME_GUIDANCE_VISION_PROMPT } from "./prompts"
 import { formatTranscript } from "./transcript"
 import FramePicker from "./framepicker"
 
@@ -32,10 +32,10 @@ export default function FrameGuide({ videoFile, transcript, niche, selectedInspi
     const run = async () => {
       try {
         const formatted = formatTranscript(transcript, 4000)
-        const result = await analyzeText(
-          FRAME_GUIDANCE_PROMPT(formatted, niche, selectedInspiration.title),
+        const result = await analyzeVision(
+          [selectedInspiration.thumbnailUrl],
+          FRAME_GUIDANCE_VISION_PROMPT(formatted, niche),
           null,
-          { raw: false },
         )
         if (mountedRef.current) {
           setGuidance(result)

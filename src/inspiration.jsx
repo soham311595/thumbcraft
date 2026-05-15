@@ -29,13 +29,21 @@ function creatorMeta(type) {
 
 const cardWidth = 280
 
-export default function Inspiration({ niche, transcript, videoTitle, theme, onSelect }) {
+const PRINCIPLE_OPTIONS = [
+  { key: "color_contrast", label: "Color contrast" },
+  { key: "composition_layout", label: "Composition layout" },
+  { key: "text_style", label: "Text style" },
+  { key: "emotional_energy", label: "Emotional energy" },
+]
+
+export default function Inspiration({ niche, transcript, videoTitle, theme, onSelect, onPrinciplesChange }) {
   const cardStyle = { background: theme.cardBg, border: `1px solid ${theme.cardBorder}`, borderRadius: 14, padding: 20 }
   const [phase, setPhase] = useState("suggesting")
   const [creators, setCreators] = useState([])
   const [results, setResults] = useState([])
   const [error, setError] = useState("")
   const [selected, setSelected] = useState(null)
+  const [selectedPrinciples, setSelectedPrinciples] = useState(["composition_layout"])
   const mountedRef = useRef(true)
 
   useEffect(() => {
@@ -86,7 +94,17 @@ export default function Inspiration({ niche, transcript, videoTitle, theme, onSe
 
   const handleSelect = (item) => {
     setSelected(item.videoId)
+    setSelectedPrinciples(["composition_layout"])
     onSelect(item)
+    if (onPrinciplesChange) onPrinciplesChange(["composition_layout"])
+  }
+
+  const togglePrinciple = (key) => {
+    const next = selectedPrinciples.includes(key)
+      ? selectedPrinciples.filter(k => k !== key)
+      : [...selectedPrinciples, key]
+    setSelectedPrinciples(next.length > 0 ? next : [key])
+    if (onPrinciplesChange) onPrinciplesChange(next.length > 0 ? next : [key])
   }
 
   // Group results by channel, sort each group by viral ratio descending
@@ -292,6 +310,7 @@ export default function Inspiration({ niche, transcript, videoTitle, theme, onSe
                       </span>
                     </div>
                     {isSelected && (
+                      <>
                       <div style={{
                         position: "absolute", top: 8, right: 8,
                         background: "#f72585", color: "#fff",
@@ -300,6 +319,28 @@ export default function Inspiration({ niche, transcript, videoTitle, theme, onSe
                       }}>
                         SELECTED
                       </div>
+                      <div style={{ marginTop: 8, display: "flex", flexWrap: "wrap", gap: 4 }}>
+                        {PRINCIPLE_OPTIONS.map((opt) => {
+                          const active = selectedPrinciples.includes(opt.key)
+                          return (
+                            <button
+                              key={opt.key}
+                              onClick={(e) => { e.stopPropagation(); togglePrinciple(opt.key) }}
+                              style={{
+                                background: active ? "rgba(247,37,133,0.15)" : "rgba(255,255,255,0.04)",
+                                border: active ? "1px solid #f72585" : "1px solid rgba(255,255,255,0.08)",
+                                color: active ? "#f72585" : theme.textMuted,
+                                borderRadius: 6, padding: "3px 8px",
+                                fontSize: 9, fontWeight: active ? 700 : 500,
+                                cursor: "pointer", fontFamily: "'Space Mono', monospace",
+                              }}
+                            >
+                              {opt.label}
+                            </button>
+                          )
+                        })}
+                      </div>
+                      </>
                     )}
                   </div>
                 )

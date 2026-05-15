@@ -10,7 +10,7 @@ import AiEditChat from "./AiEditChat"
 import {
   NICHE_ANALYSIS_PROMPT,
   THUMBNAIL_CRITIQUE_PROMPT,
-  IMAGE_PROMPT_GENERATOR,
+  IMAGE_PROMPT_GENERATOR_V2,
 } from "./prompts"
 import {
   AlertCircle,
@@ -165,6 +165,11 @@ export default function ThumbCraft() {
   const [showPaywall, setShowPaywall] = useState(false)
   const [promoInput, setPromoInput] = useState("")
   const [promoError, setPromoError] = useState("")
+  const [selectedPrinciples, setSelectedPrinciples] = useState([])
+
+  const handlePrinciplesChange = (principles) => {
+    setSelectedPrinciples(principles)
+  }
 
   const hasRemaining = session && session.remaining > 0
 
@@ -292,8 +297,8 @@ export default function ThumbCraft() {
       }
 
       const promptText = selectedFrameTimestamp != null
-        ? `Use this video frame as the visual starting point for a YouTube thumbnail. Keep the subject and composition of the frame but enhance it with bold colors, dramatic lighting, and text overlay. This MUST be a HIGH-CTR thumbnail that creates a curiosity gap — make viewers feel they NEED to click to find out what's inside.\n\n${IMAGE_PROMPT_GENERATOR(modifiedNiche, null, 0)}`
-        : `Create a YouTube thumbnail based on this concept (no video frame reference needed). This MUST be a HIGH-CTR thumbnail that creates a curiosity gap — make viewers feel they NEED to click to find out what's inside.\n\n${IMAGE_PROMPT_GENERATOR(modifiedNiche, null, 0)}`
+        ? `Use this video frame as the visual starting point for a YouTube thumbnail. Keep the subject and composition of the frame but enhance it with bold colors, dramatic lighting, and text overlay. This MUST be a HIGH-CTR thumbnail that creates a curiosity gap — make viewers feel they NEED to click to find out what's inside.\n\n${IMAGE_PROMPT_GENERATOR_V2(modifiedNiche, null, 0, selectedPrinciples)}`
+        : `Create a YouTube thumbnail based on this concept (no video frame reference needed). This MUST be a HIGH-CTR thumbnail that creates a curiosity gap — make viewers feel they NEED to click to find out what's inside.\n\n${IMAGE_PROMPT_GENERATOR_V2(modifiedNiche, null, 0, selectedPrinciples)}`
 
       const result = await generateThumbnail(promptText, refImages)
       setGeneratedThumb(result)
@@ -680,6 +685,7 @@ Text overlay: "${editedTextOverlay}"`
             videoTitle={videoTitle}
             theme={theme}
             onSelect={handleInspirationSelect}
+            onPrinciplesChange={handlePrinciplesChange}
           />
 
           {selectedInspiration && (

@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react"
 import { Loader2, AlertCircle, Flame, Star, Zap } from "lucide-react"
 import { analyzeText } from "./ai"
-import { CREATOR_SUGGESTION_PROMPT } from "./prompts"
+import { CREATOR_SUGGESTION_PROMPT_V2 } from "./prompts"
 
 function formatCount(n) {
   if (n >= 1e6) return (n / 1e6).toFixed(1) + "M"
@@ -51,7 +51,7 @@ export default function Inspiration({ niche, transcript, videoTitle, theme, onSe
       try {
         const formatted = transcript ? (Array.isArray(transcript) ? transcript.map(s => s.text).join(" ").slice(0, 2000) : String(transcript).slice(0, 2000)) : ""
         const result = await analyzeText(
-          CREATOR_SUGGESTION_PROMPT(niche, videoTitle || "Unknown", formatted),
+          CREATOR_SUGGESTION_PROMPT_V2(niche, videoTitle || "Unknown", formatted),
           null,
         )
         if (!mountedRef.current) return

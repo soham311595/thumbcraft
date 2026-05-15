@@ -1,4 +1,4 @@
-export const NICHE_ANALYSIS_PROMPT = (transcript, title) => `
+const NICHE_ANALYSIS_PROMPT_V1 = (transcript, title) => `
 You are an expert YouTube strategist. Analyze this video and extract everything needed to create a high-performing thumbnail.
 
 VIDEO TITLE: "${title}"
@@ -104,6 +104,8 @@ Return ONLY valid JSON — no markdown, no preamble:
   }
 }
 `
+
+export const NICHE_ANALYSIS_PROMPT = NICHE_ANALYSIS_PROMPT_V2
 
 export const STYLE_ANALYSIS_PROMPT = (count) => `
 You are a thumbnail design expert. Analyze these ${count} competitor YouTube thumbnails and identify dominant visual patterns.
@@ -223,7 +225,7 @@ PRIMARY NICHE: ${niche.niche?.primary_category}
 SUBCATEGORY: ${niche.niche?.subcategory}
 TARGET AUDIENCE: ${niche.niche?.audience}
 EMOTIONAL HOOK: ${niche.emotional_hook?.type} — ${niche.emotional_hook?.description}
-THUMBNAIL CONCEPT: ${niche.thumbnail_strategy?.concept}
+THUMBNAIL CONCEPT: ${niche.thumbnail_blueprint?.composition || niche.thumbnail_strategy?.concept}
 TRANSCRIPT SNIPPET:
 ${(transcript || "").slice(0, 2000)}
 
@@ -270,6 +272,10 @@ Return ONLY valid JSON — no markdown, no preamble:
 }
 `
 
+function nicheOverlay(niche) {
+  return niche.thumbnail_blueprint?.text_overlay || niche.thumbnail_strategy?.text_overlay || ""
+}
+
 export const THUMBNAIL_CRITIQUE_PROMPT = (niche, transcript) => `
 You are a YouTube thumbnail design critic. Analyze the provided thumbnail image and the video context below.
 Rate it across multiple dimensions and give actionable feedback.
@@ -277,7 +283,7 @@ Rate it across multiple dimensions and give actionable feedback.
 NICHE: ${niche.niche?.primary_category} / ${niche.niche?.subcategory}
 AUDIENCE: ${niche.niche?.audience}
 EMOTIONAL HOOK: ${niche.emotional_hook?.type} — ${niche.emotional_hook?.description}
-TARGET TEXT OVERLAY: "${niche.thumbnail_strategy?.text_overlay ?? ''}"
+TARGET TEXT OVERLAY: "${nicheOverlay(niche)}"
 
 Return ONLY valid JSON — no markdown, no preamble:
 {
@@ -295,27 +301,39 @@ Return ONLY valid JSON — no markdown, no preamble:
 }`
 
 export const IMAGE_PROMPT_GENERATOR = (niche, style, variationIndex) => {
+  const ts = niche.thumbnail_strategy || {}
+  const bp = niche.thumbnail_blueprint || {}
   const angles = [
     `Create a HIGH-CTR YouTube thumbnail INSPIRED BY but VISUALLY DISTINCT from typical ${niche.niche?.subcategory} thumbnails. Design for a curiosity gap — viewers feel compelled to click.`,
     `Create a HIGH-CTR YouTube thumbnail that BREAKS THE PATTERN of typical ${niche.niche?.subcategory} thumbnails while still signaling the niche. Must create a curiosity gap that drives clicks.`,
     `Create a HIGH-CTR YouTube thumbnail with a CINEMATIC, editorial, high-production feel for ${niche.niche?.subcategory}. The composition should create a curiosity gap that demands a click.`,
   ]
 
+  const concept = bp.composition || ts.concept || ""
+  const overlay = bp.text_overlay || ts.text_overlay || ""
+  const faceNeeded = bp.face_needed ?? ts.face_recommended
+  const faceExp = bp.face_expression || ts.face_expression || ""
+  const colorDesc = ts.color_mood
+    ? "COLOR MOOD: " + ts.color_mood
+    : bp.color_palette
+      ? "COLOR PALETTE: primary=" + (bp.color_palette.primary || "") + ", accent=" + (bp.color_palette.accent || "") + ", bg=" + (bp.color_palette.background || "")
+      : ""
+
   return `${angles[variationIndex]}
 
-CONTENT: ${niche.thumbnail_strategy?.concept}
-TEXT OVERLAY: "${niche.thumbnail_strategy?.text_overlay ?? ''}"
+CONTENT: ${concept}
+TEXT OVERLAY: "${overlay}"
 EMOTIONAL TONE: ${niche.emotional_hook?.type} — ${niche.emotional_hook?.description}
-COLOR MOOD: ${niche.thumbnail_strategy?.color_mood}
-${niche.thumbnail_strategy?.face_recommended
-  ? `FACE: Include a person with expression: ${niche.thumbnail_strategy?.face_expression}`
+${colorDesc}
+${faceNeeded
+  ? `FACE: Include a person with expression: ${faceExp}`
   : 'NO FACE: Focus on visual metaphor or graphic elements'}
 DIFFERENTIATION: ${style?.differentiation_opportunity || "Create a unique, attention-grabbing thumbnail that stands out from typical content in this niche."}
 
 REQUIREMENTS:
 - 16:9 aspect ratio (1280x720)
 - High contrast, readable at small thumbnail size
-- Text "${niche.thumbnail_strategy?.text_overlay ?? ''}" must appear prominently
+- Text "${overlay}" must appear prominently
 - No generic stock photo feel
 - Photorealistic or high-quality graphic style
 - Creates a CURIOSITY GAP — viewer needs to click to find out more

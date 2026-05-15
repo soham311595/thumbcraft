@@ -169,8 +169,9 @@ export default function ThumbCraft() {
   const hasRemaining = session && session.remaining > 0
 
   useEffect(() => {
-    if (nicheAnalysis?.thumbnail_strategy?.text_overlay) {
-      setEditedTextOverlay(nicheAnalysis.thumbnail_strategy.text_overlay)
+    const defaultOverlay = nicheAnalysis?.thumbnail_blueprint?.text_overlay || nicheAnalysis?.thumbnail_strategy?.text_overlay
+    if (defaultOverlay) {
+      setEditedTextOverlay(defaultOverlay)
     }
   }, [nicheAnalysis])
 
@@ -281,7 +282,11 @@ export default function ThumbCraft() {
       const modifiedNiche = {
         ...nicheAnalysis,
         thumbnail_strategy: {
-          ...nicheAnalysis.thumbnail_strategy,
+          ...(nicheAnalysis.thumbnail_strategy || {}),
+          text_overlay: editedTextOverlay,
+        },
+        thumbnail_blueprint: {
+          ...(nicheAnalysis.thumbnail_blueprint || {}),
           text_overlay: editedTextOverlay,
         },
       }
@@ -314,7 +319,7 @@ export default function ThumbCraft() {
     const promptText = `Edit this YouTube thumbnail based on this request: "${editRequest}"
 
 Keep the subject and composition but make the requested changes.
-Original concept: ${nicheAnalysis.thumbnail_strategy?.concept}
+Original concept: ${nicheAnalysis.thumbnail_blueprint?.composition || nicheAnalysis.thumbnail_strategy?.concept}
 Text overlay: "${editedTextOverlay}"`
 
     const result = await generateThumbnail(promptText, [prevThumbUrl])
@@ -645,13 +650,16 @@ Text overlay: "${editedTextOverlay}"`
                   THUMBNAIL STRATEGY
                 </div>
                 <div style={{ fontSize: 13, color: "var(--c-text-bright)", lineHeight: 1.6, marginBottom: 8 }}>
-                  {nicheAnalysis.thumbnail_strategy?.concept}
-                </div>
-                {nicheAnalysis.thumbnail_strategy?.text_overlay && (
-                  <div style={{ fontSize: 24, fontWeight: 900, color: "#fff", fontFamily: "'Impact', sans-serif", letterSpacing: "0.02em", marginTop: 4 }}>
-                    "{nicheAnalysis.thumbnail_strategy.text_overlay}"
+                  {nicheAnalysis.thumbnail_blueprint?.composition || nicheAnalysis.thumbnail_strategy?.concept}
                   </div>
-                )}
+                  {(() => {
+                    const overlay = nicheAnalysis.thumbnail_blueprint?.text_overlay || nicheAnalysis.thumbnail_strategy?.text_overlay
+                    return overlay ? (
+                    <div style={{ fontSize: 24, fontWeight: 900, color: "#fff", fontFamily: "'Impact', sans-serif", letterSpacing: "0.02em", marginTop: 4 }}>
+                      "{overlay}"
+                </div>
+                  ) : null
+                })()}
               </div>
             </div>
           </div>
@@ -810,7 +818,7 @@ Text overlay: "${editedTextOverlay}"`
                         THUMBNAIL STRATEGY
                       </div>
                       <div style={{ fontSize: 13, color: "var(--c-text-tertiary)", lineHeight: 1.7, marginBottom: 12 }}>
-                        {nicheAnalysis?.thumbnail_strategy?.concept}
+                        {nicheAnalysis?.thumbnail_blueprint?.composition || nicheAnalysis?.thumbnail_strategy?.concept}
                       </div>
                       <div style={{ fontSize: 10, fontWeight: 700, color: "var(--c-text-dim)", marginBottom: 4, fontFamily: "'Space Mono', monospace" }}>
                         TEXT OVERLAY

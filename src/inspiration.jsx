@@ -36,7 +36,7 @@ const PRINCIPLE_OPTIONS = [
   { key: "emotional_energy", label: "Emotional energy" },
 ]
 
-export default function Inspiration({ niche, transcript, videoTitle, theme, onSelect, onPrinciplesChange }) {
+export default function Inspiration({ niche, transcript, videoTitle, theme, onSelect, onPrinciplesChange, onResults }) {
   const cardStyle = { background: theme.cardBg, border: `1px solid ${theme.cardBorder}`, borderRadius: 14, padding: 20 }
   const [phase, setPhase] = useState("suggesting")
   const [creators, setCreators] = useState([])
@@ -79,7 +79,12 @@ export default function Inspiration({ niche, transcript, videoTitle, theme, onSe
         if (data.error) throw new Error(data.error)
         if (!mountedRef.current) return
 
-        setResults(data.results || [])
+        const enriched = (data.results || []).map(r => {
+          const creator = creatorList.find(c => c.handle === r.creatorHandle)
+          return { ...r, creatorType: creator?.type || "in_niche" }
+        })
+        setResults(enriched)
+        if (onResults) onResults(enriched)
         if (data.results?.length === 0) setError("No long-form videos found from these creators")
         setPhase("done")
       } catch (e) {

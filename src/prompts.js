@@ -266,11 +266,12 @@ IMPORTANT: Each creator MUST have an exact YouTube channel handle (e.g. @mrbeast
 Return ONLY valid JSON — no markdown, no preamble:
 {
   "creators": [
-    { "handle": "@handle", "name": "Channel display name", "reason": "one sentence explaining why relevant; if cross-niche, specify which visual element to borrow" },
-    { "handle": "@handle", "name": "Channel display name", "reason": "..." }
+    { "handle": "@handle", "name": "Channel display name", "reason": "one sentence explaining why relevant; if cross-niche, specify which visual element to borrow", "type": "in_niche" },
+    { "handle": "@handle", "name": "Channel display name", "reason": "...", "type": "cross_niche" }
   ]
 }
-`
+
+For each creator, set "type" to exactly one of: "in_niche", "cross_niche", or "non_youtube".`
 
 function nicheOverlay(niche) {
   return niche.thumbnail_blueprint?.text_overlay || niche.thumbnail_strategy?.text_overlay || ""

@@ -6,6 +6,7 @@ import FrameGuide from "./frameGuide"
 import Inspiration from "./inspiration"
 import ThumbnailCritique from "./thumbnailCritique"
 import AiEditChat from "./AiEditChat"
+import FeedSim from "./FeedSim"
 
 import {
   NICHE_ANALYSIS_PROMPT,
@@ -166,6 +167,11 @@ export default function ThumbCraft() {
   const [promoInput, setPromoInput] = useState("")
   const [promoError, setPromoError] = useState("")
   const [selectedPrinciples, setSelectedPrinciples] = useState([])
+  const [inspirationResults, setInspirationResults] = useState([])
+
+  const handleInspirationResults = (results) => {
+    setInspirationResults(results)
+  }
 
   const handlePrinciplesChange = (principles) => {
     setSelectedPrinciples(principles)
@@ -686,6 +692,7 @@ Text overlay: "${editedTextOverlay}"`
             theme={theme}
             onSelect={handleInspirationSelect}
             onPrinciplesChange={handlePrinciplesChange}
+            onResults={handleInspirationResults}
           />
 
           {selectedInspiration && (
@@ -895,6 +902,55 @@ Text overlay: "${editedTextOverlay}"`
                     </span>
                   </div>
                 </div>
+              </div>
+
+              {/* Mobile preview */}
+              <div style={{
+                maxWidth: 180, marginBottom: 20,
+                border: "1px solid var(--c-card-border)",
+                borderRadius: 8, overflow: "hidden",
+              }}>
+                <img
+                  src={generatedThumb.dataUrl || generatedThumb.url}
+                  alt="Mobile preview"
+                  style={{ width: "100%", display: "block" }}
+                />
+                <div style={{
+                  fontSize: 9, color: "var(--c-text-dim)",
+                  textAlign: "center", padding: "3px 0",
+                  fontFamily: "'Space Mono', monospace",
+                  background: "var(--c-card-bg)",
+                }}>
+                  Mobile preview (180px)
+                </div>
+              </div>
+
+              <div style={{ marginBottom: 20 }}>
+                {(() => {
+                  const inNiche = inspirationResults.filter(r => r.creatorType === "in_niche")
+                  if (inNiche.length === 0 && inspirationResults.length > 0) {
+                    const fallback = [...inspirationResults].sort(() => Math.random() - 0.5).slice(0, 8)
+                    return (
+                      <FeedSim
+                        generatedThumbUrl={generatedThumb.dataUrl || generatedThumb.url}
+                        videoTitle={videoTitle}
+                        competitorThumbs={fallback}
+                        theme={theme}
+                      />
+                    )
+                  }
+                  if (inNiche.length > 0) {
+                    return (
+                      <FeedSim
+                        generatedThumbUrl={generatedThumb.dataUrl || generatedThumb.url}
+                        videoTitle={videoTitle}
+                        competitorThumbs={inNiche}
+                        theme={theme}
+                      />
+                    )
+                  }
+                  return null
+                })()}
               </div>
 
               <div style={{ marginBottom: 24 }}>

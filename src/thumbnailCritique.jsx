@@ -6,6 +6,7 @@ const CATEOGRY_META = {
   text_readability: { label: "Text Readability", icon: Type, color: "#eab308" },
   emotional_appeal: { label: "Emotional Appeal", icon: Heart, color: "#22c55e" },
   ctr_potential: { label: "CTR Potential", icon: MousePointer, color: "#06b6d4" },
+  niche_differentiation: { label: "Niche Differentiation", icon: TrendingUp, color: "#06b6d4" },
 }
 
 function scoreColor(s) {
@@ -69,11 +70,16 @@ function CategoryBar({ catKey, cat, theme }) {
           {cat.note}
         </div>
       )}
+      {catKey === "niche_differentiation" && cat.specific_conflict && (
+        <div style={{ fontSize: 9, color: "#f72585", marginTop: 2, lineHeight: 1.4, fontFamily: "'Space Mono', monospace" }}>
+          {cat.specific_conflict}
+        </div>
+      )}
     </div>
   )
 }
 
-export default function ThumbnailCritique({ critique, loading, error, theme }) {
+export default function ThumbnailCritique({ critique, loading, error, theme, onApplyEdit }) {
   const cardStyle = { background: theme.cardBg, border: `1px solid ${theme.cardBorder}`, borderRadius: 14, padding: 20 }
 
   if (loading) {
@@ -129,12 +135,41 @@ export default function ThumbnailCritique({ critique, loading, error, theme }) {
         )}
         {critique.weaknesses?.length > 0 && (
           <div style={{ flex: 1, minWidth: 200 }}>
-            <div style={{ fontSize: 10, fontWeight: 700, color: "#f72585", marginBottom: 6, fontFamily: "'Space Mono', monospace" }}>
+            <div style={{ fontSize: 10, fontWeight: 700, color: "#f72585", marginBottom: 8, fontFamily: "'Space Mono', monospace" }}>
               WEAKNESSES
             </div>
-            <ul style={{ margin: 0, paddingLeft: 16, fontSize: 12, color: theme.textSecondary, lineHeight: 1.8 }}>
-              {critique.weaknesses.map((s, i) => <li key={i}>{s}</li>)}
-            </ul>
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {critique.weaknesses.map((w, i) => {
+                const desc = typeof w === "string" ? w : w.description
+                const cmd = typeof w === "string" ? "" : w.edit_command
+                return (
+                  <div key={i} style={{
+                    background: "rgba(247,37,133,0.04)",
+                    border: "1px solid rgba(247,37,133,0.12)",
+                    borderRadius: 8, padding: "8px 10px",
+                    display: "flex", gap: 8, alignItems: "flex-start",
+                  }}>
+                    <span style={{ fontSize: 12, color: theme.textSecondary, lineHeight: 1.5, flex: 1 }}>
+                      {desc}
+                    </span>
+                    {cmd && onApplyEdit && (
+                      <button
+                        onClick={() => onApplyEdit(cmd)}
+                        style={{
+                          background: "linear-gradient(135deg, #f72585, #7209b7)",
+                          border: "none", color: "#fff", borderRadius: 6,
+                          padding: "4px 10px", fontSize: 10, fontWeight: 700,
+                          cursor: "pointer", fontFamily: "'Space Mono', monospace",
+                          whiteSpace: "nowrap", flexShrink: 0,
+                        }}
+                      >
+                        Fix this
+                      </button>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
           </div>
         )}
       </div>

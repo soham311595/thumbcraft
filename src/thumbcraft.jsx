@@ -12,6 +12,7 @@ import {
   NICHE_ANALYSIS_PROMPT,
   THUMBNAIL_CRITIQUE_PROMPT,
   IMAGE_PROMPT_GENERATOR_V2,
+  COHERENCE_CHECK_PROMPT,
 } from "./prompts"
 import {
   AlertCircle,
@@ -159,6 +160,8 @@ export default function ThumbCraft() {
   const [critique, setCritique] = useState(null)
   const [critiqueLoading, setCritiqueLoading] = useState(false)
   const [critiqueError, setCritiqueError] = useState("")
+  const [coherence, setCoherence] = useState(null)
+  const [coherenceLoading, setCoherenceLoading] = useState(false)
   const [editedTextOverlay, setEditedTextOverlay] = useState("")
 
   // Session / paywall
@@ -283,6 +286,8 @@ export default function ThumbCraft() {
     setError("")
     setCritique(null)
     setCritiqueError("")
+    setCoherence(null)
+    setCoherenceLoading(false)
     setStatus("Generating thumbnail...")
 
     try {
@@ -347,20 +352,40 @@ Text overlay: "${editedTextOverlay}"`
     return result
   }
 
+  const handleApplyEdit = async (editCommand) => {
+    if (!hasRemaining) return
+    const thumbUrl = generatedThumb?.dataUrl || generatedThumb?.url
+    if (!thumbUrl) return
+    setError("")
+    try {
+      await handleEdit(editCommand, thumbUrl)
+    } catch (e) {
+      setError(e.message)
+    }
+  }
+
   const triggerCritique = async (thumb) => {
     setCritiqueLoading(true)
     setCritiqueError("")
+    setCoherenceLoading(true)
+    setCoherence(null)
     try {
       const imgUrl = thumb.url || thumb.dataUrl
       if (!imgUrl) throw new Error("No image URL available")
       const formatted = transcript ? formatTranscript(transcript, 4000) : ""
-      const prompt = THUMBNAIL_CRITIQUE_PROMPT(nicheAnalysis, formatted)
-      const result = await analyzeVision([imgUrl], prompt)
-      setCritique(result)
+
+      const [critiqueResult, coherenceResult] = await Promise.all([
+        analyzeVision([imgUrl], THUMBNAIL_CRITIQUE_PROMPT(nicheAnalysis, formatted)),
+        videoTitle ? analyzeVision([imgUrl], COHERENCE_CHECK_PROMPT(videoTitle)) : Promise.resolve(null),
+      ])
+
+      setCritique(critiqueResult)
+      if (coherenceResult) setCoherence(coherenceResult)
     } catch (e) {
       setCritiqueError(e.message)
     } finally {
       setCritiqueLoading(false)
+      setCoherenceLoading(false)
       setStatus("")
     }
   }
@@ -406,6 +431,7 @@ Text overlay: "${editedTextOverlay}"`
   const handleStartNew = () => {
     setGeneratedThumb(null)
     setCritique(null)
+    setCoherence(null)
     setStep(0)
   }
 
@@ -973,6 +999,31 @@ Text overlay: "${editedTextOverlay}"`
                 </div>
               )}
 
+              {coherenceLoading && (
+                <div style={{ fontSize: 11, color: "var(--c-text-muted)", marginBottom: 12, fontFamily: "'Space Mono', monospace" }}>
+                  Checking title-thumbnail alignment...
+                </div>
+              )}
+
+              {coherence && !coherence.aligned && coherence.warning && (
+                <div style={{
+                  display: "flex", alignItems: "flex-start", gap: 8,
+                  background: "rgba(234,179,8,0.08)",
+                  border: "1px solid rgba(234,179,8,0.25)",
+                  borderRadius: 10, padding: "10px 14px", marginBottom: 16,
+                }}>
+                  <span style={{ fontSize: 14, flexShrink: 0 }}>⚠️</span>
+                  <div>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: "#eab308", marginBottom: 2, fontFamily: "'Space Mono', monospace" }}>
+                      Title-Thumbnail Mismatch
+                    </div>
+                    <div style={{ fontSize: 12, color: "var(--c-text-secondary)", lineHeight: 1.5 }}>
+                      {coherence.warning}
+                    </div>
+                  </div>
+                </div>
+              )}
+
               <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
                 <button onClick={() => {
                   const link = document.createElement("a")
@@ -1000,6 +1051,7 @@ Text overlay: "${editedTextOverlay}"`
                 loading={critiqueLoading}
                 error={critiqueError}
                 theme={theme}
+                onApplyEdit={hasRemaining ? handleApplyEdit : undefined}
               />
             </div>
           )}

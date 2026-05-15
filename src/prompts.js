@@ -294,12 +294,45 @@ Return ONLY valid JSON — no markdown, no preamble:
     "color_and_contrast": { "score": 0-100, "note": "string (one sentence)" },
     "text_readability": { "score": 0-100, "note": "string (one sentence)" },
     "emotional_appeal": { "score": 0-100, "note": "string (one sentence)" },
-    "ctr_potential": { "score": 0-100, "note": "string (one sentence)" }
+    "ctr_potential": { "score": 0-100, "note": "string (one sentence)" },
+    "niche_differentiation": { "score": 0-100, "note": "string (one sentence)", "specific_conflict": "which element makes this look like every other [niche] thumbnail" }
   },
   "strengths": ["string", "string", "string"],
-  "weaknesses": ["string", "string", "string"],
+  "weaknesses": [
+    { "description": "string (what's wrong)", "edit_command": "string (precise edit prompt to fix this)" },
+    { "description": "string", "edit_command": "string" }
+  ],
   "improvement_tips": ["string", "string", "string"]
 }`
+
+export const COHERENCE_CHECK_PROMPT = (title) => `
+You are a YouTube thumbnail strategist. Analyze the provided thumbnail image and compare it to the video title below.
+
+VIDEO TITLE: "${title}"
+
+Does this thumbnail create accurate expectations for a video with this title?
+Will viewers feel deceived after clicking?
+
+Score coherence from 0-100 where:
+- 90-100: Perfect alignment — thumbnail and title tell the same story
+- 70-89: Good alignment — minor mismatch but not misleading
+- 50-69: Misaligned — thumbnail suggests something different from the title
+- Below 50: Deceptive — thumbnail will likely cause viewers to click away, hurting retention
+
+Return ONLY valid JSON — no markdown, no preamble:
+{
+  "coherence_score": 0-100,
+  "aligned": true,
+  "warning": null
+}
+
+If not perfectly aligned, return:
+{
+  "coherence_score": 55,
+  "aligned": false,
+  "warning": "string explaining the specific mismatch — e.g. 'the thumbnail shows a shocked reaction but the title is educational, creating a curiosity gap that may feel clickbaity'"
+}
+`
 
 export const IMAGE_PROMPT_GENERATOR = (niche, style, variationIndex) => {
   const ts = niche.thumbnail_strategy || {}
